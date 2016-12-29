@@ -1,11 +1,11 @@
-[submodule "i18n"]
+[submodule "scripts/i18n"]
 	path = scripts/i18n
-	url = https://gerrit.wikimedia.org/r/p/pywikibot/i18n.git
-	branch = master
+	url = https://gerrit.wikimedia.org/r/pywikibot/i18n
+	branch = .
 	ignore = all
 
 [submodule "externals/httplib2"]
 	path = externals/httplib2
-	url = https://gerrit.wikimedia.org/r/p/pywikibot/externals/httplib2.git
+	url = https://gerrit.wikimedia.org/r/pywikibot/externals/httplib2
 	branch = .
 	ignore = all
