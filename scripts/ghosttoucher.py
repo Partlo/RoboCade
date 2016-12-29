@@ -1,12 +1,11 @@
-__author__ = 'cadec_000'
+import pywikibot
+from pywikibot import pagegenerators
+
 
 def main(*args):
-    import pywikibot
-    import config
-    import pagegenerators
 
     try:
-        config.cosmetic_changes = False
+        # config.cosmetic_changes = False
         wook = pywikibot.getSite('en', 'starwars')
         gen = pagegenerators.GeneratorFactory()
         for arg in pywikibot.handleArgs(*args):

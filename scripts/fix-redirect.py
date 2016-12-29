@@ -1,10 +1,6 @@
-__author__ = 'cadec_000'
-
-import wikipedia as pywikibot
-import pagegenerators
+import pywikibot
 import re
-from pywikibot import i18n
-import webbrowser
+from pywikibot import pagegenerators, textlib
 
 
 class RedirectFixer:
@@ -25,7 +21,7 @@ class RedirectFixer:
             return
         if rep:
             oldR = re.compile(re.escape(rep[0]), re.UNICODE)
-            text = pywikibot.replaceExcept(text, oldR, rep[1], exceptions)
+            text = textlib.replaceExcept(text, oldR, rep[1], exceptions)
 
         if redirect.endswith(")"):
             if correct.endswith(")"):
@@ -70,7 +66,7 @@ class RedirectFixer:
             replacements[i] = oldR, new
 
         for old, new in replacements:
-            text = pywikibot.replaceExcept(text, old, new, exceptions)
+            text = textlib.replaceExcept(text, old, new, exceptions)
 
         return text
 

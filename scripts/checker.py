@@ -1,16 +1,14 @@
-from urllib2 import Request, urlopen, URLError
-import urllib2
+from urllib2 import Request, urlopen, quote
 import datetime
 import userlib
-import wikipedia
-import pagegenerators
+import pywikibot
+from pywikibot import pagegenerators, User
 import json
-import ast
 
 
 class InactiveChecker:
     def __init__(self, start=None):
-        self.wook = wikipedia.getSite('en', 'starwars')
+        self.wook = pywikibot.getSite('en', 'starwars')
         self.current = datetime.datetime.utcnow()
         self.limit = 365
         self.editSummary = "Marking user as inactive"
@@ -43,13 +41,13 @@ class InactiveChecker:
         if check:
             query = 'http://starwars.wikia.com' + \
                     '/api.php?action=query&list=usercontribs&ucnamespace=0&uclimit=1&ucprop=title|timestamp&format=json' + \
-                    '&ucuser='  + urllib2.quote(username.encode("utf-8")) + \
+                    '&ucuser='  + quote(username.encode("utf-8")) + \
                     '&ucstart=' + ISODateString(self.current) + \
                     '&ucend='   + ISODateString(self.current - datetime.timedelta(days=self.limit))
         else:
             query = 'http://starwars.wikia.com' + \
                     '/api.php?action=query&list=usercontribs&ucnamespace=0&uclimit=1&ucprop=title|timestamp&format=json' + \
-                    '&ucuser='  + urllib2.quote(username.encode("utf-8"))
+                    '&ucuser='  + quote(username.encode("utf-8"))
         return query
 
     def check_activity(self, user):
@@ -57,7 +55,7 @@ class InactiveChecker:
         if user.username.find('/') != -1:
             if (user.username.find('/sig') != -1) or (user.username.find('/Sig') != -1):
                 return "active subpage"
-            new_user = userlib.User(self.wook, user.username.split('/')[0])
+            new_user = User(self.wook, user.username.split('/')[0])
             result = self.check_activity(new_user)
             if result == "inactive":
                 return "inactive subpage"
@@ -109,23 +107,23 @@ class InactiveChecker:
         try:
             if subpage:
                 if not page.isRedirectPage():
-                    wikipedia.output(u'Redirecting subpage User:%s to inactive userpage.' % page.title())
+                    pywikibot.output(u'Redirecting subpage User:%s to inactive userpage.' % page.title())
                     new_text = "#REDIRECT [[User:%s]]" % page.title().split('/')[0][5:]
                     page.put(new_text, "Owner is inactive.")
                 else:
-                    wikipedia.output(u'User:%s is a subpage of an inactive user and is already redirected.' % page.title())
+                    pywikibot.output(u'User:%s is a subpage of an inactive user and is already redirected.' % page.title())
             else:
                 userpage = page.getUserPage()
                 if userpage.isRedirectPage():
-                    wikipedia.output(u'Userpage for User:%s is a redirect.' % page.username)
+                    pywikibot.output(u'Userpage for User:%s is a redirect.' % page.username)
                     return
 
                 for text in excepttext:
                     if userpage.get().find(text) != -1:
-                        wikipedia.output(u'User:%s is tagged.' % page.username)
+                        pywikibot.output(u'User:%s is tagged.' % page.username)
                         return
 
-                wikipedia.output(u'Tagging User:%s as inactive.' % page.username)
+                pywikibot.output(u'Tagging User:%s as inactive.' % page.username)
                 request = Request(self.getApiUrl(page.username))
                 response = urlopen(request)
                 message = json.loads(response.read())
@@ -136,37 +134,37 @@ class InactiveChecker:
                     new_text = "{{Inactive|None}}"
                     userpage.put(new_text, comment=self.editSummary)
 
-        except wikipedia.LockedPage:
-            wikipedia.output("Not permitted to edit page.")
-        except wikipedia.NoUsername:
-            wikipedia.output("Not permitted to edit page.")
+        except pywikibot.LockedPage:
+            pywikibot.output("Not permitted to edit page.")
+        except pywikibot.NoUsername:
+            pywikibot.output("Not permitted to edit page.")
 
     def run(self):
         for userpage in self.userList:
             # Create User item
-            user = userlib.User(self.wook, userpage.title()[5:])
+            user = User(self.wook, userpage.title()[5:])
             result = self.check_activity(user)
 
             if result == "active":
-                wikipedia.output(u'User:%s is an active user.' % user.username)
+                pywikibot.output(u'User:%s is an active user.' % user.username)
                 continue
             elif result == "inactive":
                 self.tag_inactive(user)
             elif result == "inactive subpage":
                 self.tag_inactive(userpage, subpage=True)
             elif result == "active subpage":
-                #wikipedia.output(u'User:%s is a subpage of an active user.' % userpage.title())
+                # pywikibot.output(u'User:%s is a subpage of an active user.' % userpage.title())
                 continue
             elif result == "dne":
-                wikipedia.output(u'User %s does not exist.' % user.username)
+                pywikibot.output(u'User %s does not exist.' % user.username)
 
 
 def main(*args):
     start = None
-    for arg in wikipedia.handleArgs(*args):
+    for arg in pywikibot.handleArgs(*args):
         if arg.startswith('-start'):
             if len(arg) == '6':
-                start = wikipedia.input(
+                start = pywikibot.input(
                     u'Please enter the userpage to start with:')
             else:
                 start = arg[7:]
@@ -177,4 +175,4 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        wikipedia.stopme()
+        pywikibot.stopme()

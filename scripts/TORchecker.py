@@ -1,6 +1,6 @@
-import wikipedia as pywikibot
-import pagegenerators
+import pywikibot
 import codecs
+from rc_utilies import text_file_page_gen, split_line
 
 
 class TORchecker:
@@ -11,7 +11,7 @@ class TORchecker:
         self.list = []
         self.appearances = []
 
-        for page in TextFileGenerator('swtor.txt'):
+        for page in text_file_page_gen('swtor.txt', self.site):
             self.list.append(page)
 
         app_source = 'Star Wars: The Old Republic'
@@ -25,25 +25,8 @@ class TORchecker:
             app_source += ': Shadow of Revan'
         if exp == 'kotfe':
             app_source += ': Knights of the Fallen Empire'
-        for page in list(pywikibot.Page(self.site, app_source).getReferences(internal=True)):
+        for page in list(pywikibot.Page(self.site, app_source).getReferences()):
             self.appearances.append(page.title())
-
-    def TextfilePageGenerator(filename):
-        f = codecs.open(filename, 'r', config.textfile_encoding)
-
-        R = re.compile(ur'\[\[(.+?)(?:\]\]|\|)')
-        pageTitle = None
-        for pageTitle in R.findall(f.read()):
-            yield pywikibot.Page(site, pageTitle)
-        if pageTitle is None:
-            f.seek(0)
-            for title in f:
-                title = title.strip()
-                if '|' in title:
-                    title = title[:title.index('|')]
-                if title:
-                    yield title
-        f.close()
 
     def run(self):
         not_linked = []
@@ -67,31 +50,24 @@ class TORchecker:
         except KeyboardInterrupt:
             quit()
 
-    def splitLine(self):
-        if self.counter % 100:
-            return ''
-        else:
-            pywikibot.output("%s lines" % self.counter)
-            return (u'<!-- ***** %dth title is above this line. ***** -->\n'
-                    % self.counter)
 
 def main(*args):
     append = False
     filename = "tor.txt"
     try:
-        titlefile = codecs.open(filename, encoding='utf-8',
+        title_file = codecs.open(filename, encoding='utf-8',
                                 mode=(lambda x: x and 'a' or 'w')(append))
     except IOError:
         pywikibot.output("%s cannot be opened for writing." %
                          filename)
         return
-    checker = TORchecker(exp, titlefile)
+    checker = TORchecker(args[0], title_file)
 
     try:
         checker.run()
     finally:
-        if titlefile:
-            titlefile.close()
+        if title_file:
+            title_file.close()
 
 if __name__ == "__main__":
     try:

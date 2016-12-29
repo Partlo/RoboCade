@@ -1,5 +1,5 @@
 import pywikibot
-import pagegenerators
+from pywikibot import pagegenerators
 
 def main(*args):
     add_cat = None

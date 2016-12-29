@@ -1,5 +1,5 @@
-import wikipedia as pywikibot
-import pagegenerators
+import pywikibot
+from pywikibot import pagegenerators
 import codecs
 
 

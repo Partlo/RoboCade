@@ -1,8 +1,8 @@
-import wikipedia as pywikibot
-import pagegenerators
+import pywikibot
+from pywikibot import pagegenerators, textlib
+from pywikibot.data.api import Request
 import codecs
 import re
-import query
 
 
 class CanonChecker:
@@ -58,7 +58,7 @@ class CanonChecker:
                 counter += 1
                 pywikibot.output('%s    %s' % (counter, page.title()))
                 try:
-                    this_text = pywikibot.removeLanguageLinks(page.get(get_redirect=True), page.site())
+                    this_text = textlib.removeLanguageLinks(page.get(get_redirect=True), page.site())
                 except pywikibot.NoPage:
                     pywikibot.output("Error: %s is not a page" % page.title())
                     continue
@@ -67,8 +67,8 @@ class CanonChecker:
                     continue
                 except pywikibot.SectionError:
                     return []
-                this_text = pywikibot.removeCategoryLinks(this_text, page.site())
-                this_text = pywikibot.removeDisabledParts(this_text)
+                this_text = textlib.removeCategoryLinks(this_text, page.site())
+                this_text = textlib.removeDisabledParts(this_text)
                 this_text = self.site().resolvemagicwords(this_text)
 
                 for match in Rlink.finditer(this_text):
@@ -84,7 +84,8 @@ class CanonChecker:
                         elif title in skip:
                             continue
                         params['titles'] = title
-                        data = query.GetData(params, self.site(), sysop=True)
+                        query = Request(**params)
+                        data = query.submit()
 
                         try:
                             if 'missing' in data['query']['pages'].values()[0] and title.endswith('/Canon'):

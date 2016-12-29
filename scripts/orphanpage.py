@@ -1,5 +1,5 @@
-import wikipedia as pywikibot
-import pagegenerators
+import pywikibot
+from pywikibot import pagegenerators
 import codecs
 
 
@@ -88,13 +88,6 @@ class OrphanChecker:
             for n in not_done:
                 self.articles.write(u'%s	%s\n' % (n[0], n[1]))
                 self.articles.flush()
-
-    def split_line(self):
-        if self.counter % 100:
-            return ''
-        else:
-            return (u'<!-- ***** %dth title is above this line. ***** -->\n'
-                    % self.counter)
 
 
 def main(*args):

@@ -1,12 +1,11 @@
-import wikipedia as pywikibot
-import pagegenerators
-import catlib
+import pywikibot
+from pywikibot import pagegenerators
 
 
 class DisambigLister:
     def __init__(self):
         self.site = pywikibot.getSite()
-        self.cat = catlib.Category(self.site, 'Category:Disambiguation pages')
+        self.cat = pywikibot.Category(self.site, 'Category:Disambiguation pages')
         self.gen = pagegenerators.CategorizedPageGenerator(self.cat)
         self.paren_list = {"A": [], "B": [], "C": [], "D": [], "E": [], "F": [], "G": [], "H": [], "I": [], "J": [],
                            "K": [], "L": [], "M": [], "N": [], "O": [], "P": [], "Q": [], "R": [], "S": [], "T": [],
