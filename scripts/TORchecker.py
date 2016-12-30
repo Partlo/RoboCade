@@ -1,6 +1,6 @@
 import pywikibot
 import codecs
-from rc_utilies import text_file_page_gen, split_line
+from rc_utilities import text_file_page_gen, split_line
 
 
 class TORchecker:

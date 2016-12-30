@@ -2,7 +2,7 @@ import pywikibot
 from pywikibot import pagegenerators
 import codecs
 import re
-from rc_utilies import split_line
+from rc_utilities import split_line
 
 
 def main(*args):

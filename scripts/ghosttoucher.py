@@ -6,14 +6,12 @@ def main(*args):
 
     try:
         # config.cosmetic_changes = False
-        wook = pywikibot.getSite('en', 'starwars')
         gen = pagegenerators.GeneratorFactory()
-        for arg in pywikibot.handleArgs(*args):
+        for arg in pywikibot.handle_args(*args):
             gen.handleArg(arg)
         gener = None
         gener = gen.getCombinedGenerator(gener)
-        generator = pagegenerators.PreloadingGenerator(gener,
-                                                       pageNumber=60)
+        generator = pagegenerators.PreloadingGenerator(gener)
         for page in generator:
             try:
                 text = page.get()

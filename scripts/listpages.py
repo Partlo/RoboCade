@@ -84,6 +84,8 @@ __version__ = '$Id$'
 #
 
 import os
+import codecs
+import sys
 
 import pywikibot
 from pywikibot import config2 as config
@@ -141,7 +143,7 @@ class Formatter(object):
             except pywikibot.Error:
                 self.trs_title = u'%s:%s' % (default, page._link.title)
 
-    def output(self, num=None, fmt=1):
+    def output(self, num=None, fmt='1'):
         """Output formatted string."""
         fmt = self.fmt_options.get(fmt, fmt)
         # If selected format requires trs_title, outputlang must be set.
@@ -171,6 +173,8 @@ def main(*args):
     outputlang = None
     page_get = False
     base_dir = None
+    filename = None
+    articles = None
     encoding = config.textfile_encoding
 
     # Process global args and prepare generator args parser
@@ -191,6 +195,8 @@ def main(*args):
             base_dir = arg.partition(':')[2] or '.'
         elif arg.startswith('-encode:'):
             encoding = arg.partition(':')[2]
+        elif arg.startswith('-file'):
+            filename = 'articles.txt'
         else:
             genFactory.handleArg(arg)
 
@@ -214,24 +220,38 @@ def main(*args):
                               % base_dir)
             base_dir = None
 
+    if filename:
+        articles = codecs.open(filename, encoding='utf-8',
+                               mode=(lambda x: x and 'a' or 'w')(False))
+
     gen = genFactory.getCombinedGenerator()
     if gen:
         i = 0
-        for i, page in enumerate(gen, start=1):
-            if not notitle:
-                page_fmt = Formatter(page, outputlang)
-                pywikibot.stdout(page_fmt.output(num=i, fmt=fmt))
-            if page_get:
-                try:
-                    pywikibot.output(page.text, toStdout=True)
-                except pywikibot.Error as err:
-                    pywikibot.output(err)
-            if base_dir:
-                filename = os.path.join(base_dir, page.title(as_filename=True))
-                pywikibot.output(u'Saving %s to %s' % (page.title(), filename))
-                with open(filename, mode='wb') as f:
-                    f.write(page.text.encode(encoding))
-        pywikibot.output(u"%i page(s) found" % i)
+        try:
+            for i, page in enumerate(gen, start=1):
+                if not notitle:
+                    page_fmt = Formatter(page, outputlang)
+                    if articles:
+                        articles.write(page_fmt.output(num=i, fmt=fmt))
+                        articles.flush()
+                    else:
+                        pywikibot.stdout(page_fmt.output(num=i, fmt=fmt))
+                if page_get:
+                    try:
+                        pywikibot.output(page.text, toStdout=True)
+                    except pywikibot.Error as err:
+                        pywikibot.output(err)
+                if base_dir:
+                    filename = os.path.join(base_dir, page.title(as_filename=True))
+                    pywikibot.output(u'Saving %s to %s' % (page.title(), filename))
+                    with open(filename, mode='wb') as f:
+                        f.write(page.text.encode(encoding))
+            pywikibot.output(u"%i page(s) found" % i)
+        except KeyboardInterrupt:
+            sys.exit(0)
+        finally:
+            if articles:
+                articles.close()
     else:
         pywikibot.showHelp()
 
