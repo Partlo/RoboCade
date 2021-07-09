@@ -1,171 +1,261 @@
-# -*- coding: utf-8  -*-
-"""User-interface related functions for building bots."""
+"""
+User-interface related functions for building bots.
+
+This module supports several different bot classes which could be used in
+conjunction. Each bot should subclass at least one of these four classes:
+
+* :py:obj:`BaseBot`: Basic bot class in case where the site is handled
+  differently, like working on multiple sites in parallel. No site
+  attribute is provided. Instead site of the current page should be used.
+  This class should normally not be used directly.
+
+* :py:obj:`SingleSiteBot`: Bot class which should only be run on a
+  single site. They usually store site specific content and thus can't
+  be easily run when the generator returns a page on another site. It
+  has a property ``site`` which can also be changed. If the generator
+  returns a page of a different site it'll skip that page.
+
+* :py:obj:`MultipleSitesBot`: An alias of :py:obj:`BaseBot`. Should not
+  be used if any other bot class is used.
+
+* :py:obj:`ConfigParserBot`: Bot class which supports reading options from a
+  scripts.ini configuration file. That file consists of sections, led by a
+  ``[section]`` header and followed by ``option: value`` or ``option=value``
+  entries. The section is the script name without .py suffix. All options
+  identified must be predefined in available_options dictionary.
+
+* :py:obj:`Bot`: The previous base class which should be avoided. This
+  class is mainly used for bots which work with Wikibase or together
+  with an image repository.
+
+Additionally there is the :py:obj:`CurrentPageBot` class which
+automatically sets the current page to the page treated. It is
+recommended to use this class and to use ``treat_page`` instead of
+``treat`` and ``put_current`` instead of ``userPut``. It by default
+subclasses the ``BaseBot`` class.
+
+With :py:obj:`CurrentPageBot` it's possible to subclass one of the
+following classes to filter the pages which are ultimately handled by
+``treat_page``:
+
+* :py:obj:`ExistingPageBot`: Only handle pages which do exist.
+* :py:obj:`CreatingPageBot`: Only handle pages which do not exist.
+* :py:obj:`RedirectPageBot`: Only handle pages which are redirect pages.
+* :py:obj:`NoRedirectPageBot`: Only handle pages which are not redirect pages.
+* :py:obj:`FollowRedirectPageBot`: If the generator returns a redirect
+  page it'll follow the redirect and instead work on the redirected class.
+
+It is possible to combine filters by subclassing multiple of them. They are
+new-style classes so when a class is first subclassing
+:py:obj:`ExistingPageBot` and then :py:obj:`FollowRedirectPageBot` it
+will also work on pages which do not exist when a redirect pointed to
+that. If the order is inversed it'll first follow them and then check
+whether they exist.
+
+Additionally there is the :py:obj:`AutomaticTWSummaryBot` which subclasses
+:py:obj:`CurrentPageBot` and automatically defines the summary when
+``put_current`` is used.
+"""
 #
-# (C) Pywikibot team, 2008-2015
+# (C) Pywikibot team, 2008-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+__all__ = (
+    'CRITICAL', 'ERROR', 'INFO', 'WARNING', 'DEBUG', 'INPUT', 'STDOUT',
+    'VERBOSE', 'critical', 'debug', 'error', 'exception', 'log', 'warning',
+    'output', 'stdout', 'LoggingFormatter', 'RotatingFileHandler',
+    'init_handlers', 'writelogheader',
+    'input', 'input_choice', 'input_yn', 'input_list_choice', 'ui',
+    'Option', 'StandardOption', 'NestedOption', 'IntegerOption',
+    'ContextOption', 'ListOption', 'ShowingListOption', 'MultipleChoiceList',
+    'ShowingMultipleChoiceList', 'OutputProxyOption',
+    'HighlightContextOption', 'ChoiceException', 'UnhandledAnswer',
+    'Choice', 'StaticChoice', 'LinkChoice', 'AlwaysChoice',
+    'QuitKeyboardInterrupt',
+    'InteractiveReplace',
+    'calledModuleName', 'handle_args',
+    'show_help', 'showHelp', 'suggest_help',
+    'writeToCommandLogFile', 'open_webbrowser',
+    'OptionHandler',
+    'BaseBot', 'Bot', 'ConfigParserBot', 'SingleSiteBot', 'MultipleSitesBot',
+    'CurrentPageBot', 'AutomaticTWSummaryBot',
+    'ExistingPageBot', 'FollowRedirectPageBot', 'CreatingPageBot',
+    'RedirectPageBot', 'NoRedirectPageBot',
+    'WikidataBot',
+)
 
-__version__ = '$Id$'
 
-# Note: the intention is to develop this module (at some point) into a Bot
-# class definition that can be subclassed to create new, functional bot
-# scripts, instead of writing each one from scratch.
-
-# Note: all output goes thru python std library "logging" module
-
+import atexit
 import codecs
+import configparser
 import datetime
 import json
 import logging
 import logging.handlers
 import os
-import re
 import sys
 import time
 import warnings
 import webbrowser
-
-_logger = "bot"
-
-# logging levels
-from logging import DEBUG, INFO, WARNING, ERROR, CRITICAL
-STDOUT = 16
-VERBOSE = 18
-INPUT = 25
+from collections.abc import Generator
+from contextlib import closing
+from importlib import import_module
+from pathlib import Path
+from textwrap import fill
+from typing import Any, Optional, Union
+from warnings import warn
 
 import pywikibot
+from pywikibot import config, daemonize, i18n, version
+from pywikibot.backports import Dict, Iterable, List, Sequence
+from pywikibot.bot_choice import (
+    AlwaysChoice,
+    Choice,
+    ChoiceException,
+    ContextOption,
+    HighlightContextOption,
+    IntegerOption,
+    LinkChoice,
+    ListOption,
+    MultipleChoiceList,
+    NestedOption,
+    Option,
+    OutputProxyOption,
+    QuitKeyboardInterrupt,
+    ShowingListOption,
+    ShowingMultipleChoiceList,
+    StandardOption,
+    StaticChoice,
+    UnhandledAnswer,
+)
+from pywikibot.exceptions import (
+    EditConflictError,
+    Error,
+    LockedPageError,
+    NoPageError,
+    PageSaveRelatedError,
+    ServerError,
+    SpamblacklistError,
+    UnknownFamilyError,
+    UnknownSiteError,
+    VersionParseError,
+    WikiBaseError,
+)
+from pywikibot.logging import (
+    CRITICAL,
+    DEBUG,
+    ERROR,
+    INFO,
+    INPUT,
+    STDOUT,
+    VERBOSE,
+    WARNING,
+    add_init_routine,
+    critical,
+    debug,
+    error,
+    exception,
+    log,
+    output,
+    stdout,
+    warning,
+)
+from pywikibot.tools import (
+    PYTHON_VERSION,
+    deprecate_arg,
+    deprecated,
+    deprecated_args,
+    issue_deprecation_warning,
+    suppress_warnings,
+)
+from pywikibot.tools._logging import LoggingFormatter, RotatingFileHandler
+from pywikibot.tools.formatter import color_format
 
-from pywikibot import backports
-from pywikibot import config
-from pywikibot import daemonize
-from pywikibot import version
-from pywikibot.tools import deprecated, deprecated_args
 
-if sys.version_info[0] > 2:
-    unicode = str
+# Note: all output goes through python std library "logging" module
+_logger = 'bot'
 
 # User interface initialization
 # search for user interface module in the 'userinterfaces' subdirectory
-uiModule = __import__("pywikibot.userinterfaces.%s_interface"
-                      % config.userinterface,
-                      fromlist=['UI'])
+uiModule = __import__('pywikibot.userinterfaces.{}_interface'
+                      .format(config.userinterface), fromlist=['UI'])
 ui = uiModule.UI()
+atexit.register(ui.flush)
 pywikibot.argvu = ui.argvu()
 
+_GLOBAL_HELP = """
+GLOBAL OPTIONS
+==============
+(Global arguments available for all bots)
 
-# Logging module configuration
-class RotatingFileHandler(logging.handlers.RotatingFileHandler):
+-dir:PATH         Read the bot's configuration data from directory given by
+                  PATH, instead of from the default directory.
 
-    """Modified RotatingFileHandler supporting unlimited amount of backups."""
+-lang:xx          Set the language of the wiki you want to work on, overriding
+                  the configuration in user-config.py. xx should be the
+                  site code.
 
-    def doRollover(self):
-        """
-        Modified naming system for logging files.
+-family:xyz       Set the family of the wiki you want to work on, e.g.
+                  wikipedia, wiktionary, wikivoyage, ...
+                  This will override the configuration in user-config.py.
 
-        Overwrites the default Rollover renaming by inserting the count number
-        between file name root and extension. If backupCount is >= 1, the system
-        will successively create new files with the same pathname as the base
-        file, but with inserting ".1", ".2" etc. in front of the filename
-        suffix. For example, with a backupCount of 5 and a base file name of
-        "app.log", you would get "app.log", "app.1.log", "app.2.log", ...
-        through to "app.5.log". The file being written to is always "app.log" -
-        when it gets filled up, it is closed and renamed to "app.1.log", and if
-        files "app.1.log", "app.2.log" etc. already exist, then they are
-        renamed to "app.2.log", "app.3.log" etc. respectively.
-        If backupCount is == -1 do not rotate but create new numbered filenames.
-        The newest file has the highest number except some older numbered files
-        where deleted and the bot was restarted. In this case the ordering
-        starts from the lowest available (unused) number.
+-site:xyz:xx      Set the wiki site you want to work on, e.g.
+                  wikipedia:test, wiktionary:de, wikivoyage:en, ...
+                  This will override the configuration in user-config.py.
 
-        """
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-        root, ext = os.path.splitext(self.baseFilename)
-        if self.backupCount > 0:
-            for i in range(self.backupCount - 1, 0, -1):
-                sfn = "%s.%d%s" % (root, i, ext)
-                dfn = "%s.%d%s" % (root, i + 1, ext)
-                if os.path.exists(sfn):
-                    if os.path.exists(dfn):
-                        os.remove(dfn)
-                    os.rename(sfn, dfn)
-            dfn = "%s.1%s" % (root, ext)
-            if os.path.exists(dfn):
-                os.remove(dfn)
-            os.rename(self.baseFilename, dfn)
-        elif self.backupCount == -1:
-            if not hasattr(self, '_lastNo'):
-                self._lastNo = 1
-            while True:
-                fn = "%s.%d%s" % (root, self._lastNo, ext)
-                self._lastNo += 1
-                if not os.path.exists(fn):
-                    break
-            os.rename(self.baseFilename, fn)
-        self.mode = 'w'
-        self.stream = self._open()
+-user:xyz         Log in as user 'xyz' instead of the default username.
 
-    def format(self, record):
-        """Strip trailing newlines before outputting text to file."""
-        # Warnings captured from the warnings system are not processed by
-        # logoutput(), so the 'context' variables are missing.
-        # The same context details are provided by Python 3.X, but need to
-        # be extracted from the warning message for Python <= 2.7.
-        if record.name == 'py.warnings' and 'caller_file' not in record.__dict__:
-            assert(len(record.args) == 1)
-            msg = record.args[0]
+-daemonize:xyz    Immediately return control to the terminal and redirect
+                  stdout and stderr to file xyz.
+                  (only use for bots that require no input from stdin).
 
-            if sys.version_info[0] < 3:
-                record.pathname = msg.partition(':')[0]
-                record.lineno = msg.partition(':')[2].partition(':')[0]
-                record.module = msg.rpartition('/')[2].rpartition('.')[0]
-            else:
-                assert(msg.startswith(record.pathname + ':'))
+-help             Show this help text.
 
-            record.__dict__['caller_file'] = record.pathname
-            record.__dict__['caller_name'] = record.module
-            record.__dict__['caller_line'] = record.lineno
+-log              Enable the log file, using the default filename
+                  '{}-bot.log'
+                  Logs will be stored in the logs subdirectory.
 
-            # Remove the path and the line number, and strip the extra space
-            msg = msg.partition(':')[2].partition(':')[2].lstrip()
-            record.args = (msg,)
+-log:xyz          Enable the log file, using 'xyz' as the filename.
 
-        text = logging.handlers.RotatingFileHandler.format(self, record)
-        return text.rstrip("\r\n")
+-nolog            Disable the log file (if it is enabled by default).
 
+-maxlag           Sets a new maxlag parameter to a number of seconds. Defer bot
+                  edits during periods of database server lag. Default is set
+                  by config.py
 
-class LoggingFormatter(logging.Formatter):
+-putthrottle:n    Set the minimum time (in seconds) the bot will wait between
+-pt:n             saving pages.
+-put_throttle:n
 
-    """Format LogRecords for output to file.
+-debug:item       Enable the log file and include extensive debugging data
+-debug            for component "item" (for all components if the second form
+                  is used).
 
-    This formatter *ignores* the 'newline' key of the LogRecord, because
-    every record written to a file must end with a newline, regardless of
-    whether the output to the user's console does.
+-verbose          Have the bot provide additional console output that may be
+-v                useful in debugging.
 
-    """
+-cosmeticchanges  Toggles the cosmetic_changes setting made in config.py or
+-cc               user-config.py to its inverse and overrules it. All other
+                  settings and restrictions are untouched.
 
-    def formatException(self, ei):
-        r"""
-        Convert exception trace to unicode if necessary.
+-simulate         Disables writing to the server. Useful for testing and
+                  debugging of new code (if given, doesn't do any real
+                  changes, but only shows what would have been changed).
+                  An integer or float value may be given to simulate a
+                  processing time; the bot just waits for given seconds.
 
-        Make sure that the exception trace is converted to unicode.
+-<config var>:n   You may use all given numeric config variables as option and
+                  modify it with command line.
 
-        L{exceptions.Error} traces are encoded in our console encoding, which
-        is needed for plainly printing them.  However, when logging them
-        using logging.exception, the Python logging module will try to use
-        these traces, and it will fail if they are console encoded strings.
+"""
 
-        Formatter.formatException also strips the trailing \n, which we need.
-        """
-        strExc = logging.Formatter.formatException(self, ei)
+_GLOBAL_HELP_NOTE = """
+GLOBAL OPTIONS
+==============
+For global options use -help:global or run pwb.py -help
 
-        if sys.version_info[0] < 3 and isinstance(strExc, str):
-            return strExc.decode(config.console_encoding) + '\n'
-        else:
-            return strExc + '\n'
+"""
 
 
 # Initialize the handlers and formatters for the logging system.
@@ -176,13 +266,13 @@ class LoggingFormatter(logging.Formatter):
 # The UserInterface object must define its own init_handlers() method
 # which takes the root logger as its only argument, and which adds to that
 # logger whatever handlers and formatters are needed to process output and
-# display it to the user.  The default (terminal) interface sends level
+# display it to the user. The default (terminal) interface sends level
 # STDOUT to sys.stdout (as all interfaces should) and sends all other
 # levels to sys.stderr; levels WARNING and above are labeled with the
 # level name.
 #
 # UserInterface objects must also define methods input(), input_choice(),
-# editText(), and askForCaptcha(), all of which are documented in
+# and editText(), all of which are documented in
 # userinterfaces/terminal_interface.py
 
 _handlers_initialized = False
@@ -194,7 +284,7 @@ def init_handlers(strm=None):
     This function must be called before using pywikibot.output(); and must
     be called again if the destination stream is changed.
 
-    Note: this function is called by handleArgs(), so it should normally
+    Note: this function is called by handle_args(), so it should normally
     not need to be called explicitly
 
     All user output is routed through the logging module.
@@ -203,9 +293,10 @@ def init_handlers(strm=None):
     user interfaces (GUIs) without modifying the core bot code.
 
     The following output levels are defined:
+
      - DEBUG: only for file logging; debugging messages.
      - STDOUT: output that must be sent to sys.stdout (for bots that may
-         have their output redirected to a file or other destination).
+       have their output redirected to a file or other destination).
      - VERBOSE: optional progress information for display to user.
      - INFO: normal (non-optional) progress information for display to user.
      - INPUT: prompts requiring user response.
@@ -213,46 +304,47 @@ def init_handlers(strm=None):
      - ERROR: user error messages.
      - CRITICAL: fatal error messages.
 
-    Accordingly, do ''not'' use print statements in bot code; instead,
+    Accordingly, do **not** use print statements in bot code; instead,
     use pywikibot.output function.
 
-    @param strm: Output stream. If None, re-uses the last stream if one
+    *New in version 6.2:* different logfiles are uses if multiple
+    processes of the same script are are running.
+
+    :param strm: Output stream. If None, re-uses the last stream if one
         was defined, otherwise uses sys.stderr
 
     """
     global _handlers_initialized
 
-    moduleName = calledModuleName()
-    if not moduleName:
-        moduleName = "terminal-interface"
+    module_name = calledModuleName()
+    if not module_name:
+        module_name = 'terminal-interface'
 
-    logging.addLevelName(VERBOSE, "VERBOSE")
+    logging.addLevelName(VERBOSE, 'VERBOSE')
     # for messages to be displayed on terminal at "verbose" setting
     # use INFO for messages to be displayed even on non-verbose setting
 
-    logging.addLevelName(STDOUT, "STDOUT")
+    logging.addLevelName(STDOUT, 'STDOUT')
     # for messages to be displayed to stdout
 
-    logging.addLevelName(INPUT, "INPUT")
+    logging.addLevelName(INPUT, 'INPUT')
     # for prompts requiring user response
 
-    root_logger = logging.getLogger("pywiki")
+    root_logger = logging.getLogger('pywiki')
     root_logger.setLevel(DEBUG + 1)  # all records except DEBUG go to logger
 
-    warnings_logger = logging.getLogger("py.warnings")
+    warnings_logger = logging.getLogger('py.warnings')
     warnings_logger.setLevel(DEBUG)
 
     # If there are command line warnings options, do not override them
     if not sys.warnoptions:
-        if hasattr(logging, 'captureWarnings'):
-            logging.captureWarnings(True)  # introduced in Python >= 2.7
-        else:
-            backports.captureWarnings(True)
+        logging.captureWarnings(True)
 
         if config.debug_log or 'deprecation' in config.log:
-            warnings.filterwarnings("always")
+            warnings.filterwarnings('always')
         elif config.verbose_output:
-            warnings.filterwarnings("module")
+            warnings.filterwarnings('module')
+        warnings.filterwarnings('once', category=FutureWarning)
 
     root_logger.handlers = []  # remove any old handlers
 
@@ -260,20 +352,33 @@ def init_handlers(strm=None):
     ui.init_handlers(root_logger, **config.userinterface_init_kwargs)
 
     # if user has enabled file logging, configure file handler
-    if moduleName in config.log or '*' in config.log:
-        if config.logfilename:
-            logfile = config.datafilepath("logs", config.logfilename)
+    if module_name in config.log or '*' in config.log:
+        if pywikibot.Site.__doc__ == 'TEST':  # set by aspects.DisableSiteMixin
+            pid = ''
         else:
-            logfile = config.datafilepath("logs", "%s-bot.log" % moduleName)
+            # get PID
+            throttle = pywikibot.Site().throttle  # initialize a Throttle obj
+            pid = throttle.get_pid(module_name)  # get the global PID if needed
+            pid = str(pid) + '-' if pid > 1 else ''
+
+        if config.logfilename:
+            # keep config.logfilename unchanged
+            logfile = config.datafilepath('logs', config.logfilename)
+        else:
+            # add PID to logfle name
+            logfile = config.datafilepath('logs', '{}-{}bot.log'
+                                          .format(module_name, pid))
+
         file_handler = RotatingFileHandler(filename=logfile,
                                            maxBytes=1024 * config.logfilesize,
-                                           backupCount=config.logfilecount)
+                                           backupCount=config.logfilecount,
+                                           encoding='utf-8')
 
         file_handler.setLevel(DEBUG)
         form = LoggingFormatter(
-            fmt="%(asctime)s %(caller_file)18s, %(caller_line)4s "
-                "in %(caller_name)18s: %(levelname)-8s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            fmt='%(asctime)s %(caller_file)18s, %(caller_line)4s '
+                'in %(caller_name)18s: %(levelname)-8s %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
         file_handler.setFormatter(form)
         root_logger.addHandler(file_handler)
@@ -281,17 +386,15 @@ def init_handlers(strm=None):
         # or for all components if nothing was specified
         for component in config.debug_log:
             if component:
-                debuglogger = logging.getLogger("pywiki." + component)
+                debuglogger = logging.getLogger('pywiki.' + component)
             else:
-                debuglogger = logging.getLogger("pywiki")
+                debuglogger = logging.getLogger('pywiki')
             debuglogger.setLevel(DEBUG)
             debuglogger.addHandler(file_handler)
 
         warnings_logger.addHandler(file_handler)
 
     _handlers_initialized = True
-
-    pywikibot.tools.debug = debug
 
     writelogheader()
 
@@ -302,252 +405,90 @@ def writelogheader():
 
     This may help the user to track errors or report bugs.
     """
-    # If a http thread is not available, it's too early to print a header
-    # that includes version information, which may need to query a server.
-    # The http module can't be imported due to circular dependencies.
-    http = sys.modules.get('pywikibot.comms.http', None)
-    if not http or not hasattr(http, 'threads') or not len(http.threads):
-        return
-
-    log(u'=== Pywikibot framework v2.0 -- Logging header ===')
+    log('')
+    log('=== Pywikibot framework v{} -- Logging header ==='
+        .format(pywikibot.__version__))
 
     # script call
-    log(u'COMMAND: {0}'.format(sys.argv))
+    log('COMMAND: {}'.format(sys.argv))
 
     # script call time stamp
-    log(u'DATE: %s UTC' % str(datetime.datetime.utcnow()))
+    log('DATE: {} UTC'.format(datetime.datetime.utcnow()))
 
-    # new framework release/revision? (handleArgs needs to be called first)
+    # new framework release/revision? (handle_args needs to be called first)
     try:
-        log(u'VERSION: %s' %
-            version.getversion(online=config.log_pywiki_repo_version).strip())
-    except version.ParseError:
+        log('VERSION: {}'.format(
+            version.getversion(online=config.log_pywiki_repo_version).strip()))
+    except VersionParseError:
         exception()
 
     # system
     if hasattr(os, 'uname'):
-        log(u'SYSTEM: {0}'.format(os.uname()))
+        log('SYSTEM: {}'.format(os.uname()))
 
     # config file dir
-    log(u'CONFIG FILE DIR: %s' % pywikibot.config2.base_dir)
+    log('CONFIG FILE DIR: {}'.format(pywikibot.config.base_dir))
 
     all_modules = sys.modules.keys()
 
     # These are the main dependencies of pywikibot.
-    check_package_list = ['httplib2', 'mwparserfromhell']
+    check_package_list = [
+        'requests',
+        'mwparserfromhell',
+    ]
 
     # report all imported packages
     if config.verbose_output:
         check_package_list += all_modules
 
+    log('PACKAGES:')
     packages = version.package_versions(check_package_list)
-
-    log(u'PACKAGES:')
     for name in sorted(packages.keys()):
         info = packages[name]
-        if 'path' not in info:
-            if 'type' in info:
-                info['path'] = '[' + info['type'] + ']'
-            else:
-                info['path'] = '[path unknown]'
-        if 'ver' not in info:
-            info['ver'] = '??'
+        info.setdefault('path',
+                        '[{}]'.format(info.get('type', 'path unknown')))
+        info.setdefault('ver', '??')
         if 'err' in info:
-            log(u'  %(name)s: %(err)s' % info)
+            log('  {name}: {err}'.format_map(info))
         else:
-            log(u'  %(name)s (%(path)s) = %(ver)s' % info)
+            log('  {name} ({path}) = {ver}'.format_map(info))
 
     # imported modules
-    log(u'MODULES:')
+    log('MODULES:')
     for module in sys.modules.values():
         filename = version.get_module_filename(module)
-        ver = version.get_module_version(module)
-        mtime = version.get_module_mtime(module)
-        if filename and ver and mtime:
-            # it's explicitly using str() to bypass unicode_literals in Python 2
-            # isoformat expects a char not a unicode in Python 2
-            log(u'  {0} {1} {2}'.format(filename, ver[:7], mtime.isoformat(str(' '))))
+        if not filename:
+            continue
+
+        param = {'sep': ' '}
+        if PYTHON_VERSION >= (3, 6, 0):
+            param['timespec'] = 'seconds'
+        mtime = version.get_module_mtime(module).isoformat(**param)
+
+        log('  {} {}'.format(mtime, filename))
 
     if config.log_pywiki_repo_version:
-        log(u'PYWIKI REPO VERSION: %s' % version.getversion_onlinerepo())
+        log('PYWIKI REPO VERSION: {}'.format(version.getversion_onlinerepo()))
 
-    log(u'=== ' * 14)
-
-
-# User output/logging functions
-
-# Six output functions are defined. Each requires a unicode or string
-# argument.  All of these functions generate a message to the log file if
-# logging is enabled ("-log" or "-debug" command line arguments).
-
-# The functions output(), stdout(), warning(), and error() all display a
-# message to the user through the logger object; the only difference is the
-# priority level,  which can be used by the application layer to alter the
-# display. The stdout() function should be used only for data that is
-# the "result" of a script, as opposed to information messages to the
-# user.
-
-# The function log() by default does not display a message to the user, but
-# this can be altered by using the "-verbose" command line option.
-
-# The function debug() only logs its messages, they are never displayed on
-# the user console. debug() takes a required second argument, which is a
-# string indicating the debugging layer.
-
-def logoutput(text, decoder=None, newline=True, _level=INFO, _logger="",
-              **kwargs):
-    """Format output and send to the logging module.
-
-    Helper function used by all the user-output convenience functions.
-
-    """
-    if _logger:
-        logger = logging.getLogger("pywiki." + _logger)
-    else:
-        logger = logging.getLogger("pywiki")
-
-    # make sure logging system has been initialized
-    if not _handlers_initialized:
-        init_handlers()
-
-    # frame 0 is logoutput() in this module,
-    # frame 1 is the convenience function (output(), etc.)
-    # frame 2 is whatever called the convenience function
-    frame = sys._getframe(2)
-
-    module = os.path.basename(frame.f_code.co_filename)
-    context = {'caller_name': frame.f_code.co_name,
-               'caller_file': module,
-               'caller_line': frame.f_lineno,
-               'newline': ("\n" if newline else "")}
-
-    if decoder:
-        text = text.decode(decoder)
-    elif not isinstance(text, unicode):
-        if not isinstance(text, str):
-            # looks like text is a non-text object.
-            # Maybe it has a __unicode__ builtin ?
-            # (allows to print Page, Site...)
-            text = unicode(text)
-        else:
-            try:
-                text = text.decode('utf-8')
-            except UnicodeDecodeError:
-                text = text.decode('iso8859-1')
-
-    logger.log(_level, text, extra=context, **kwargs)
+    log('=' * 57)
 
 
-def output(text, decoder=None, newline=True, toStdout=False, **kwargs):
-    r"""Output a message to the user via the userinterface.
-
-    Works like print, but uses the encoding used by the user's console
-    (console_encoding in the configuration file) instead of ASCII.
-
-    If decoder is None, text should be a unicode string. Otherwise it
-    should be encoded in the given encoding.
-
-    If newline is True, a line feed will be added after printing the text.
-
-    If toStdout is True, the text will be sent to standard output,
-    so that it can be piped to another process. All other text will
-    be sent to stderr. See: https://en.wikipedia.org/wiki/Pipeline_%28Unix%29
-
-    text can contain special sequences to create colored output. These
-    consist of the escape character \03 and the color name in curly braces,
-    e. g. \03{lightpurple}. \03{default} resets the color.
-
-    Other keyword arguments are passed unchanged to the logger; so far, the
-    only argument that is useful is "exc_info=True", which causes the
-    log message to include an exception traceback.
-
-    """
-    if toStdout:  # maintained for backwards-compatibity only
-        logoutput(text, decoder, newline, STDOUT, **kwargs)
-    else:
-        logoutput(text, decoder, newline, INFO, **kwargs)
-
-
-def stdout(text, decoder=None, newline=True, **kwargs):
-    """Output script results to the user via the userinterface."""
-    logoutput(text, decoder, newline, STDOUT, **kwargs)
-
-
-def warning(text, decoder=None, newline=True, **kwargs):
-    """Output a warning message to the user via the userinterface."""
-    logoutput(text, decoder, newline, WARNING, **kwargs)
-
-
-def error(text, decoder=None, newline=True, **kwargs):
-    """Output an error message to the user via the userinterface."""
-    logoutput(text, decoder, newline, ERROR, **kwargs)
-
-
-def log(text, decoder=None, newline=True, **kwargs):
-    """Output a record to the log file."""
-    logoutput(text, decoder, newline, VERBOSE, **kwargs)
-
-
-def critical(text, decoder=None, newline=True, **kwargs):
-    """Output a critical record to the log file."""
-    logoutput(text, decoder, newline, CRITICAL, **kwargs)
-
-
-def debug(text, layer, decoder=None, newline=True, **kwargs):
-    """Output a debug record to the log file.
-
-    @param layer: The name of the logger that text will be sent to.
-    """
-    logoutput(text, decoder, newline, DEBUG, layer, **kwargs)
-
-
-def exception(msg=None, decoder=None, newline=True, tb=False, **kwargs):
-    """Output an error traceback to the user via the userinterface.
-
-    Use directly after an 'except' statement::
-
-        ...
-        except:
-            pywikibot.exception()
-        ...
-
-    or alternatively::
-
-        ...
-        except Exception as e:
-            pywikibot.exception(e)
-        ...
-
-    @param tb: Set to True in order to output traceback also.
-    """
-    if isinstance(msg, BaseException):
-        exc_info = 1
-    else:
-        exc_info = sys.exc_info()
-        msg = u'%s: %s' % (repr(exc_info[1]).split('(')[0],
-                           unicode(exc_info[1]).strip())
-    if tb:
-        kwargs['exc_info'] = exc_info
-    logoutput(msg, decoder, newline, ERROR, **kwargs)
+add_init_routine(init_handlers)
 
 
 # User input functions
 
 
-def input(question, password=False, default='', force=False):
+def input(question: str, password: bool = False,
+          default: str = '', force: bool = False) -> str:
     """Ask the user a question, return the user's answer.
 
-    @param question: a string that will be shown to the user. Don't add a
+    :param question: a string that will be shown to the user. Don't add a
         space after the question mark/colon, this method will do this for you.
-    @type question: unicode
-    @param password: if True, hides the user's input (for password entry).
-    @type password: bool
-    @param default: The default answer if none was entered. None to require
+    :param password: if True, hides the user's input (for password entry).
+    :param default: The default answer if none was entered. None to require
         an answer.
-    @type default: basestring
-    @param force: Automatically use the default
-    @type force: bool
-    @rtype: unicode
+    :param force: Automatically use the default
     """
     # make sure logging system has been initialized
     if not _handlers_initialized:
@@ -557,32 +498,29 @@ def input(question, password=False, default='', force=False):
     return data
 
 
-def input_choice(question, answers, default=None, return_shortcut=True,
-                 automatic_quit=True, force=False):
+def input_choice(question: str, answers, default: Optional[str] = None,
+                 return_shortcut: bool = True,
+                 automatic_quit: bool = True, force: bool = False):
     """
     Ask the user the question and return one of the valid answers.
 
-    @param question: The question asked without trailing spaces.
-    @type question: basestring
-    @param answers: The valid answers each containing a full length answer and
+    :param question: The question asked without trailing spaces.
+    :param answers: The valid answers each containing a full length answer and
         a shortcut. Each value must be unique.
-    @type answers: Iterable containing an iterable of length two
-    @param default: The result if no answer was entered. It must not be in the
+    :type answers: iterable containing a sequence of length two or instances of
+        ChoiceException
+    :param default: The result if no answer was entered. It must not be in the
         valid answers and can be disabled by setting it to None. If it should
         be linked with the valid answers it must be its shortcut.
-    @type default: basestring
-    @param return_shortcut: Whether the shortcut or the index of the answer is
+    :param return_shortcut: Whether the shortcut or the index of the answer is
         returned.
-    @type return_shortcut: bool
-    @param automatic_quit: Adds the option 'Quit' ('q') and throw a
-            L{QuitKeyboardInterrupt} if selected.
-    @type automatic_quit: bool
-    @param force: Automatically use the default
-    @type force: bool
-    @return: The selected answer shortcut or index. Is -1 if the default is
+    :param automatic_quit: Adds the option 'Quit' ('q') and throw a
+        :py:obj:`QuitKeyboardInterrupt` if selected.
+    :param force: Automatically use the default
+    :return: The selected answer shortcut or index. Is -1 if the default is
         selected, it does not return the shortcut and the default is not a
         valid shortcut.
-    @rtype: int (if not return shortcut), basestring (otherwise)
+    :rtype: int (if not return shortcut), str (otherwise)
     """
     # make sure logging system has been initialized
     if not _handlers_initialized:
@@ -592,81 +530,47 @@ def input_choice(question, answers, default=None, return_shortcut=True,
                            automatic_quit=automatic_quit, force=force)
 
 
-def input_yn(question, default=None, automatic_quit=True, force=False):
+def input_yn(question: str,
+             default: Union[str, bool, None] = None,
+             automatic_quit: bool = True,
+             force: bool = False) -> bool:
     """
-    Ask the user a yes/no question and returns the answer as a bool.
+    Ask the user a yes/no question and return the answer as a bool.
 
-    @param question: The question asked without trailing spaces.
-    @type question: basestring
-    @param default: The result if no answer was entered. It must be a bool or
+    :param question: The question asked without trailing spaces.
+    :param default: The result if no answer was entered. It must be a bool or
         'y' or 'n' and can be disabled by setting it to None.
-    @type default: basestring or bool
-    @param automatic_quit: Adds the option 'Quit' ('q') and throw a
-            L{QuitKeyboardInterrupt} if selected.
-    @type automatic_quit: bool
-    @param force: Automatically use the default
-    @type force: bool
-    @return: Return True if the user selected yes and False if the user
+    :param automatic_quit: Adds the option 'Quit' ('q') and throw a
+        :py:obj:`QuitKeyboardInterrupt` if selected.
+    :param force: Automatically use the default
+    :return: Return True if the user selected yes and False if the user
         selected no. If the default is not None it'll return True if default
         is True or 'y' and False if default is False or 'n'.
-    @rtype: bool
     """
     if default not in ['y', 'Y', 'n', 'N']:
         if default:
             default = 'y'
         elif default is not None:
             default = 'n'
-    assert default in ['y', 'Y', 'n', 'N', None]
+    assert default in ['y', 'Y', 'n', 'N', None], \
+        'Default choice must be one of YyNn or default'
 
     return input_choice(question, [('Yes', 'y'), ('No', 'n')], default,
                         automatic_quit=automatic_quit, force=force) == 'y'
 
 
-@deprecated('input_choice')
-def inputChoice(question, answers, hotkeys, default=None):
-    """Ask the user a question with several options, return the user's choice.
-
-    DEPRECATED: Use L{input_choice} instead!
-
-    The user's input will be case-insensitive, so the hotkeys should be
-    distinctive case-insensitively.
-
-    @param question: a string that will be shown to the user. Don't add a
-        space after the question mark/colon, this method will do this for you.
-    @type question: basestring
-    @param answers: a list of strings that represent the options.
-    @type answers: list of basestring
-    @param hotkeys: a list of one-letter strings, one for each answer.
-    @param default: an element of hotkeys, or None. The default choice that will
-                 be returned when the user just presses Enter.
-    @return: a one-letter string in lowercase.
-    @rtype: str
-    """
-    # make sure logging system has been initialized
-    if not _handlers_initialized:
-        init_handlers()
-
-    return ui.input_choice(question=question, options=zip(answers, hotkeys),
-                           default=default, return_shortcut=True,
-                           automatic_quit=False)
-
-
-def input_list_choice(question, answers, default=None,
-                      automatic_quit=True, force=False):
+def input_list_choice(question: str, answers: Sequence[Any],
+                      default: Union[int, str, None] = None,
+                      force: bool = False) -> str:
     """
     Ask the user the question and return one of the valid answers.
 
-    @param question: The question asked without trailing spaces.
-    @type question: basestring
-    @param answers: The valid answers each containing a full length answer.
-    @type answers: Iterable of basestring
-    @param default: The result if no answer was entered. It must not be in the
+    :param question: The question asked without trailing spaces.
+    :param answers: The valid answers each containing a full length answer.
+    :param default: The result if no answer was entered. It must not be in the
         valid answers and can be disabled by setting it to None.
-    @type default: basestring
-    @param force: Automatically use the default
-    @type force: bool
-    @return: The selected answer.
-    @rtype: basestring
+    :param force: Automatically use the default
+    :return: The selected answer.
     """
     if not _handlers_initialized:
         init_handlers()
@@ -675,29 +579,203 @@ def input_list_choice(question, answers, default=None,
                                 force=force)
 
 
+class InteractiveReplace:
+
+    """
+    A callback class for textlib's replace_links.
+
+    It shows various options which can be switched on and off:
+    * allow_skip_link = True (skip the current link)
+    * allow_unlink = True (unlink)
+    * allow_replace = False (just replace target, keep section and label)
+    * allow_replace_section = False (replace target and section, keep label)
+    * allow_replace_label = False (replace target and label, keep section)
+    * allow_replace_all = False (replace target, section and label)
+    (The boolean values are the default values)
+
+    It has also a ``context`` attribute which must be a non-negative
+    integer. If it is greater 0 it shows that many characters before and
+    after the link in question. The ``context_delta`` attribute can be
+    defined too and adds an option to increase ``context`` by the given
+    amount each time the option is selected.
+
+    Additional choices can be defined using the 'additional_choices' and will
+    be amended to the choices defined by this class. This list is mutable and
+    the Choice instance returned and created by this class are too.
+    """
+
+    def __init__(self, old_link, new_link, default: Optional[str] = None,
+                 automatic_quit: bool = True):
+        """
+        Initializer.
+
+        :param old_link: The old link which is searched. The label and section
+            are ignored.
+        :type old_link: pywikibot.page.Link or pywikibot.page.Page
+        :param new_link: The new link with which it should be replaced.
+            Depending on the replacement mode it'll use this link's label and
+            section. If False it'll unlink all and the attributes beginning
+            with allow_replace are ignored.
+        :type new_link: pywikibot.page.Link or pywikibot.page.Page or False
+        :param default: The default answer as the shortcut
+        :param automatic_quit: Add an option to quit and raise a
+            QuitKeyboardException.
+        """
+        if isinstance(old_link, pywikibot.Page):
+            self._old = old_link._link
+        else:
+            self._old = old_link
+        if isinstance(new_link, pywikibot.Page):
+            self._new = new_link._link
+        else:
+            self._new = new_link
+        self._default = default
+        self._quit = automatic_quit
+        self._current_match = None
+        self.context = 30
+        self.context_delta = 0
+        self.allow_skip_link = True
+        self.allow_unlink = True
+        self.allow_replace = False
+        self.allow_replace_section = False
+        self.allow_replace_label = False
+        self.allow_replace_all = False
+        # Use list to preserve order
+        self._own_choices = [
+            ('skip_link', StaticChoice('Do not change', 'n', None)),
+            ('unlink', StaticChoice('Unlink', 'u', False)),
+        ]
+        if self._new:
+            self._own_choices += [
+                ('replace', LinkChoice('Change link target', 't', self,
+                                       False, False)),
+                ('replace_section', LinkChoice(
+                    'Change link target and section', 's', self, True, False)),
+                ('replace_label', LinkChoice('Change link target and label',
+                                             'l', self, False, True)),
+                ('replace_all', LinkChoice('Change complete link', 'c', self,
+                                           True, True)),
+            ]
+
+        self.additional_choices = []
+
+    def handle_answer(self, choice):
+        """Return the result for replace_links."""
+        for c in self.choices:
+            if c.shortcut == choice:
+                return c.handle()
+
+        raise ValueError('Invalid choice "{}"'.format(choice))
+
+    def __call__(self, link, text, groups, rng):
+        """Ask user how the selected link should be replaced."""
+        if self._old == link:
+            self._current_match = (link, text, groups, rng)
+            while True:
+                try:
+                    answer = self.handle_link()
+                except UnhandledAnswer as e:
+                    if e.stop:
+                        raise
+                else:
+                    break
+            self._current_match = None  # don't reset in case of an exception
+            return answer
+        return None
+
+    @property
+    def choices(self):
+        """Return the tuple of choices."""
+        choices = []
+        for name, choice in self._own_choices:
+            if getattr(self, 'allow_' + name):
+                choices += [choice]
+        if self.context_delta > 0:
+            choices += [HighlightContextOption(
+                'more context', 'm', self.current_text, self.context,
+                self.context_delta, *self.current_range)]
+        choices += self.additional_choices
+        return tuple(choices)
+
+    def handle_link(self):
+        """Handle the currently given replacement."""
+        choices = self.choices
+        for choice in choices:
+            if isinstance(choice, Choice) and choice.handle_link():
+                return choice.answer
+
+        if self.context > 0:
+            rng = self.current_range
+            text = self.current_text
+            # at the beginning of the link, start red color.
+            # at the end of the link, reset the color to default
+            pywikibot.output(text[max(0, rng[0] - self.context): rng[0]]
+                             + color_format('{lightred}{0}{default}',
+                                            text[rng[0]: rng[1]])
+                             + text[rng[1]: rng[1] + self.context])
+            question = 'Should the link '
+        else:
+            question = 'Should the link {lightred}{0}{default} '
+
+        if self._new is False:
+            question += 'be unlinked?'
+        else:
+            question += color_format('target to {lightpurple}{0}{default}?',
+                                     self._new.canonical_title())
+
+        choice = pywikibot.input_choice(
+            color_format(question, self._old.canonical_title()),
+            choices, default=self._default, automatic_quit=self._quit)
+
+        return self.handle_answer(choice)
+
+    @property
+    def current_link(self):
+        """Get the current link when it's handling one currently."""
+        if self._current_match is None:
+            raise ValueError('No current link')
+        return self._current_match[0]
+
+    @property
+    def current_text(self):
+        """Get the current text when it's handling one currently."""
+        if self._current_match is None:
+            raise ValueError('No current text')
+        return self._current_match[1]
+
+    @property
+    def current_groups(self):
+        """Get the current groups when it's handling one currently."""
+        if self._current_match is None:
+            raise ValueError('No current groups')
+        return self._current_match[2]
+
+    @property
+    def current_range(self):
+        """Get the current range when it's handling one currently."""
+        if self._current_match is None:
+            raise ValueError('No current range')
+        return self._current_match[3]
+
+
 # Command line parsing and help
-def calledModuleName():
+def calledModuleName() -> str:
     """Return the name of the module calling this function.
 
     This is required because the -help option loads the module's docstring
     and because the module name will be used for the filename of the log.
 
-    @rtype: unicode
     """
-    # get commandline arguments
-    called = pywikibot.argvu[0].strip()
-    if ".py" in called:  # could end with .pyc, .pyw, etc. on some platforms
-        # clip off the '.py?' filename extension
-        called = called[:called.rindex('.py')]
-    return os.path.basename(called)
+    return Path(pywikibot.argvu[0]).stem
 
 
-def handle_args(args=None, do_help=True):
+def handle_args(args: Optional[Iterable[str]] = None,
+                do_help: bool = True) -> List[str]:
     """
     Handle standard command line arguments, and return the rest as a list.
 
-    Takes the command line arguments as Unicode strings, processes all
-    global parameters such as -lang or -log, initialises the logging layer,
+    Takes the command line arguments as strings, processes all global
+    parameters such as -lang or -log, initialises the logging layer,
     which emits startup information into log at level 'verbose'.
 
     This makes sure that global arguments are applied first,
@@ -705,58 +783,56 @@ def handle_args(args=None, do_help=True):
 
     args may be passed as an argument, thereby overriding sys.argv
 
-    @param args: Command line arguments
-    @type args: list of unicode
-    @param do_help: Handle parameter '-help' to show help and invoke sys.exit
-    @type do_help: bool
-    @return: list of arguments not recognised globally
-    @rtype: list of unicode
+    :param args: Command line arguments
+    :param do_help: Handle parameter '-help' to show help and invoke sys.exit
+    :return: list of arguments not recognised globally
     """
+    if pywikibot._sites:
+        warn('Site objects have been created before arguments were handled',
+             UserWarning)
+
     # get commandline arguments if necessary
     if not args:
         # it's the version in pywikibot.__init__ that is changed by scripts,
         # not the one in pywikibot.bot.
         args = pywikibot.argvu[1:]
+
     # get the name of the module calling this function. This is
-    # required because the -help option loads the module's docstring and because
-    # the module name will be used for the filename of the log.
-    moduleName = calledModuleName()
-    if not moduleName:
-        moduleName = "terminal-interface"
-    nonGlobalArgs = []
+    # required because the -help option loads the module's docstring and
+    # because the module name will be used for the filename of the log.
+    module_name = calledModuleName() or 'terminal-interface'
+    non_global_args = []
     username = None
     do_help = None if do_help else False
     for arg in args:
-        if do_help is not False and arg == '-help':
-            do_help = True
-        elif arg.startswith('-dir:'):
+        option, _, value = arg.partition(':')
+        if do_help is not False and option == '-help':
+            do_help = value or True
+        elif option == '-dir':
             pass
-        elif arg.startswith('-family:'):
-            config.family = arg[len("-family:"):]
-        elif arg.startswith('-lang:'):
-            config.mylang = arg[len("-lang:"):]
-        elif arg.startswith("-user:"):
-            username = arg[len("-user:"):]
-        elif arg.startswith('-putthrottle:'):
-            config.put_throttle = int(arg[len("-putthrottle:"):])
-        elif arg.startswith('-pt:'):
-            config.put_throttle = int(arg[len("-pt:"):])
-        elif arg == '-log':
-            if moduleName not in config.log:
-                config.log.append(moduleName)
-        elif arg.startswith('-log:'):
-            if moduleName not in config.log:
-                config.log.append(moduleName)
-            config.logfilename = arg[len("-log:"):]
-        elif arg == '-nolog':
-            if moduleName in config.log:
-                config.log.remove(moduleName)
-        elif arg in ('-cosmeticchanges', '-cc'):
+        elif option == '-site':
+            config.family, config.mylang = value.split(':')
+        elif option == '-family':
+            config.family = value
+        elif option == '-lang':
+            config.mylang = value
+        elif option == '-user':
+            username = value
+        elif option in ('-putthrottle', '-pt'):
+            config.put_throttle = float(value)
+        elif option == '-log':
+            if module_name not in config.log:
+                config.log.append(module_name)
+            if value:
+                config.logfilename = value
+        elif option == '-nolog':
+            config.log = []
+        elif option in ('-cosmeticchanges', '-cc'):
             config.cosmetic_changes = not config.cosmetic_changes
-            output(u'NOTE: option cosmetic_changes is %s\n'
-                   % config.cosmetic_changes)
-        elif arg == '-simulate':
-            config.simulate = True
+            output('NOTE: option cosmetic_changes is {}\n'
+                   .format(config.cosmetic_changes))
+        elif option == '-simulate':
+            config.simulate = value or True
         #
         #  DEBUG control:
         #
@@ -782,34 +858,35 @@ def handle_args(args=None, do_help=True):
         #    If used, "-debug" turns on file logging, regardless of any
         #    other settings.
         #
-        elif arg == '-debug':
-            if moduleName not in config.log:
-                config.log.append(moduleName)
-            if "" not in config.debug_log:
-                config.debug_log.append("")
-        elif arg.startswith("-debug:"):
-            if moduleName not in config.log:
-                config.log.append(moduleName)
-            component = arg[len("-debug:"):]
-            if component not in config.debug_log:
-                config.debug_log.append(component)
-        elif arg in ('-verbose', '-v'):
+        elif option == '-debug':
+            if module_name not in config.log:
+                config.log.append(module_name)
+            if value not in config.debug_log:
+                config.debug_log.append(value)  # may be empty string
+        elif option in ('-verbose', '-v'):
             config.verbose_output += 1
-        elif arg.startswith('-daemonize'):
-            redirect_std = arg[len('-daemonize:'):] if ':' in arg else None
+        elif option == '-daemonize':
+            redirect_std = value or None
             daemonize.daemonize(redirect_std=redirect_std)
         else:
             # the argument depends on numerical config settings
-            # e.g. -maxlag:
+            # e.g. -maxlag and -step:
             try:
-                _arg, _val = arg[1:].split(':')
+                _arg = option[1:]
                 # explicitly check for int (so bool doesn't match)
                 if not isinstance(getattr(config, _arg), int):
                     raise TypeError
-                setattr(config, _arg, int(_val))
+                setattr(config, _arg, int(value))
             except (ValueError, TypeError, AttributeError):
                 # argument not global -> specific bot script will take care
-                nonGlobalArgs.append(arg)
+                non_global_args.append(arg)
+
+    if calledModuleName() != 'generate_user_files':  # T261771
+        try:
+            pywikibot.Site()
+        except (UnknownFamilyError, UnknownSiteError):
+            pywikibot.exception()
+            sys.exit(1)
 
     if username:
         config.usernames[config.family][config.mylang] = username
@@ -818,156 +895,273 @@ def handle_args(args=None, do_help=True):
     writeToCommandLogFile()
 
     if config.verbose_output:
-        # Please don't change the regular expression here unless you really
-        # have to - some git versions (like 1.7.0.4) seem to treat lines
-        # containing just `$Id:` as if they were ident lines (see
-        # gitattributes(5)) leading to unwanted behaviour like automatic
-        # replacement with `$Id$`
-        # or `$Id$`.
-        m = re.search(r"\$Id"
-                      r": (\w+) \$", pywikibot.__version__)
-        if m:
-            pywikibot.output(u'Pywikibot r%s' % m.group(1))
-        else:
-            # Version ID not available on SVN repository.
-            # Maybe this information should be imported from version.py
-            pywikibot.output(u'Pywikibot SVN repository')
-        pywikibot.output(u'Python %s' % sys.version)
+        pywikibot.output('Python ' + sys.version)
 
     if do_help:
-        showHelp()
+        show_help(show_global=do_help == 'global')
         sys.exit(0)
 
-    pywikibot.debug(u"handle_args() completed.", _logger)
-    return nonGlobalArgs
+    debug('handle_args() completed.', _logger)
+    return non_global_args
 
 
-@deprecated("handle_args")
-def handleArgs(*args):
-    """DEPRECATED. Use handle_args()."""
-    return handle_args(args)
+def show_help(module_name=None, show_global=False):
+    """Show help for the Bot.
 
-
-def showHelp(module_name=None):
-    """Show help for the Bot."""
+    *Renamed in version 4.0.*
+    """
     if not module_name:
         module_name = calledModuleName()
     if not module_name:
         try:
             module_name = sys.modules['__main__'].main.__module__
         except NameError:
-            module_name = "no_module"
+            module_name = 'no_module'
 
-    globalHelp = u'''
-Global arguments available for all bots:
-
--dir:PATH         Read the bot's configuration data from directory given by
-                  PATH, instead of from the default directory.
-
--lang:xx          Set the language of the wiki you want to work on, overriding
-                  the configuration in user-config.py. xx should be the
-                  language code.
-
--family:xyz       Set the family of the wiki you want to work on, e.g.
-                  wikipedia, wiktionary, wikitravel, ...
-                  This will override the configuration in user-config.py.
-
--user:xyz         Log in as user 'xyz' instead of the default username.
-
--daemonize:xyz    Immediately return control to the terminal and redirect
-                  stdout and stderr to file xyz.
-                  (only use for bots that require no input from stdin).
-
--help             Show this help text.
-
--log              Enable the log file, using the default filename
-                  '%s-bot.log'
-                  Logs will be stored in the logs subdirectory.
-
--log:xyz          Enable the log file, using 'xyz' as the filename.
-
--nolog            Disable the log file (if it is enabled by default).
-
--maxlag           Sets a new maxlag parameter to a number of seconds. Defer bot
-                  edits during periods of database server lag. Default is set by
-                  config.py
-
--putthrottle:n    Set the minimum time (in seconds) the bot will wait between
--pt:n             saving pages.
--put_throttle:n
-
--debug:item       Enable the log file and include extensive debugging data
--debug            for component "item" (for all components if the second form
-                  is used).
-
--verbose          Have the bot provide additional console output that may be
--v                useful in debugging.
-
--cosmeticchanges  Toggles the cosmetic_changes setting made in config.py or
--cc               user_config.py to its inverse and overrules it. All other
-                  settings and restrictions are untouched.
-
--simulate         Disables writing to the server. Useful for testing and
-                  debugging of new code (if given, doesn't do any real
-                  changes, but only shows what would have been changed).
-
--<config var>:n   You may use all given numeric config variables as option and
-                  modify it with command line.
-
-''' % module_name
     try:
-        module = __import__('%s' % module_name)
-        helpText = module.__doc__
-        if sys.version_info[0] < 3 and isinstance(helpText, str):
-            helpText = helpText.decode('utf-8')
+        module = import_module(module_name)
+        help_text = module.__doc__
         if hasattr(module, 'docuReplacements'):
             for key, value in module.docuReplacements.items():
-                helpText = helpText.replace(key, value.strip('\n\r'))
-        pywikibot.stdout(helpText)  # output to STDOUT
+                help_text = help_text.replace(key, value.strip('\n\r'))
     except Exception:
         if module_name:
-            pywikibot.stdout(u'Sorry, no help available for %s' % module_name)
-        pywikibot.log('showHelp:', exc_info=True)
-    pywikibot.stdout(globalHelp)
+            pywikibot.stdout('Sorry, no help available for ' + module_name)
+        pywikibot.log('show_help:', exc_info=True)
+    else:
+        pywikibot.stdout(help_text)  # output to STDOUT
+
+    if show_global or module_name == 'pwb':
+        pywikibot.stdout(_GLOBAL_HELP.format(module_name))
+    else:
+        pywikibot.stdout(_GLOBAL_HELP_NOTE)
+
+
+@deprecated('show_help', since='20200705')
+def showHelp(module_name=None):  # pragma: no cover
+    """DEPRECATED. Use show_help()."""
+    return show_help(module_name)
+
+
+def suggest_help(missing_parameters: Optional[List[str]] = None,
+                 missing_generator: bool = False,
+                 unknown_parameters: Optional[List[str]] = None,
+                 exception=None,
+                 missing_action: bool = False,
+                 additional_text: str = '',
+                 missing_dependencies: Optional[List[str]] = None) -> bool:
+    """
+    Output error message to use -help with additional text before it.
+
+    :param missing_parameters: A list of parameters which are missing.
+    :param missing_generator: Whether a generator is missing.
+    :param unknown_parameters: A list of parameters which are unknown.
+    :param exception: An exception thrown.
+    :type exception: Exception
+    :param missing_action: Add an entry that no action was defined.
+    :type missing_action: bool
+    :param additional_text: Additional text added to the end.
+    :param missing_dependencies: A list of dependencies which cannot be
+        imported.
+    :type missing_dependencies: list of str
+    :return: True if an error message was printed, False otherwise
+    """
+    messages = []
+    if exception:
+        messages.append('An error occurred: "{}".'.format(exception))
+    if missing_generator:
+        messages.append(
+            'Unable to execute script because no generator was defined.')
+    if missing_parameters:
+        messages.append('Missing parameter{s} "{params}".'
+                        .format(s='s' if len(missing_parameters) > 1 else '',
+                                params='", "'.join(missing_parameters)))
+    if missing_action:
+        messages.append('No action defined.')
+    if unknown_parameters:
+        messages.append('Unknown parameter{s} "{params}".'
+                        .format(s='s' if len(unknown_parameters) > 1 else '',
+                                params='", "'.join(unknown_parameters)))
+    if missing_dependencies:
+        messages.append('Missing dependenc{s} "{deps}".'
+                        .format(
+                            s='ies' if len(missing_dependencies) > 1 else 'y',
+                            deps='", "'.join(missing_dependencies)))
+    if additional_text:
+        messages.append(additional_text.strip())
+    if messages:
+        messages.append('Use -help for further information.')
+        error('\n'.join(messages))
+        return True
+    return False
 
 
 def writeToCommandLogFile():
     """
-    Save name of the called module along with all parameters to logs/commands.log.
+    Save name of the called module along with all params to logs/commands.log.
 
     This can be used by user later to track errors or report bugs.
     """
     modname = calledModuleName()
     # put quotation marks around all parameters
-    args = [modname] + [u'"%s"' % s for s in pywikibot.argvu[1:]]
+    args = [modname] + ['"{}"'.format(s) for s in pywikibot.argvu[1:]]
     command_log_filename = config.datafilepath('logs', 'commands.log')
     try:
         command_log_file = codecs.open(command_log_filename, 'a', 'utf-8')
     except IOError:
         command_log_file = codecs.open(command_log_filename, 'w', 'utf-8')
-    # add a timestamp in ISO 8601 formulation
-    isoDate = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-    command_log_file.write('%s r%s Python %s '
-                           % (isoDate, version.getversiondict()['rev'],
-                              sys.version.split()[0]))
-    s = u' '.join(args)
-    command_log_file.write(s + os.linesep)
-    command_log_file.close()
+
+    with closing(command_log_file):
+        # add a timestamp in ISO 8601 formulation
+        iso_date = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        command_log_file.write('{} r{} Python {} '
+                               .format(iso_date,
+                                       version.getversiondict()['rev'],
+                                       sys.version.split()[0]))
+        command_log_file.write(' '.join(args) + os.linesep)
 
 
 def open_webbrowser(page):
     """Open the web browser displaying the page and wait for input."""
-    from pywikibot import i18n
     webbrowser.open(page.full_url())
-    i18n.input('pywikibot-enter-finished-browser')
+    i18n.input('pywikibot-enter-finished-browser',
+               fallback_prompt='Press Enter when finished in browser.')
 
 
-class QuitKeyboardInterrupt(KeyboardInterrupt):
+class _OptionDict(dict):
 
-    """The user has cancelled processing at a prompt."""
+    """The option dict which holds the options of OptionHandler.
+
+    *New in version 4.1.*
+    """
+
+    def __init__(self, classname, options):
+        self._classname = classname
+        super().__init__(options)
+
+    def __missing__(self, key):
+        raise Error("'{}' is not a valid option for {}."
+                    .format(key, self._classname))
+
+    def __getattr__(self, name):
+        """Get item from dict."""
+        return self.__getitem__(name)
+
+    def __setattr__(self, name, value):
+        """Set item or attribute."""
+        if name != '_classname':
+            self.__setitem__(name, value)
+        else:
+            super().__setattr__(name, value)
 
 
-class Bot(object):
+_DEPRECATION_MSG = 'Optionhandler.opt.option attribute ' \
+                   'or Optionhandler.opt[option] item'
+
+
+class OptionHandler:
+
+    """Class to get and set options.
+
+    How to use options of OptionHandler and its BaseBot subclasses:
+    First define an available_options class attribute for your own
+    option handler to define all available options:
+
+    >>> default_options = {'foo': 'bar', 'bar': 42, 'baz': False}
+    >>> class MyHandler(OptionHandler): available_options = default_options
+
+    Or you may update the predefined setting in the class initializer.
+    BaseBot predefines a 'always' options and sets it to False:
+
+    self.available_options.update(always=True, another_option='Yes')
+
+    Now you can instantiate an OptionHandler or BaseBot class passing
+    options other than default values:
+
+    >>> bot = MyHandler(baz=True)
+
+    You can access bot options either as keyword item or attribute:
+
+    >>> bot.opt.foo
+    'bar'
+    >>> bot.opt['bar']
+    42
+    >>> bot.opt.baz  # default was overridden
+    True
+
+    You can set the options in the same way:
+
+    >>> bot.opt.bar = 4711
+    >>> bot.opt['baz'] = None
+    >>>
+
+    Or you can use the option as a dict:
+
+    >>> 'Option opt.{foo} is {bar}'.format_map(bot.opt)
+    'Option opt.bar is 4711'
+    """
+
+    # Handler configuration.
+    # Only the keys of the dict can be passed as init options
+    # The values are the default values
+    # Overwrite this in subclasses!
+
+    available_options = {}  # type: Dict[str, Any]
+
+    def __init__(self, **kwargs):
+        """
+        Only accept options defined in available_options.
+
+        :param kwargs: bot options
+        """
+        self.set_options(**kwargs)
+
+    @property
+    @deprecated('available_options', since='20201006', future_warning=True)
+    def availableOptions(self):
+        """DEPRECATED. Available_options class property."""
+        return self.available_options
+
+    @deprecated('set_options', since='20201006', future_warning=True)
+    def setOptions(self, **kwargs):  # pragma: no cover
+        """DEPRECATED. Set the instance options."""
+        self.set_options(**kwargs)
+
+    def set_options(self, **options):
+        """Set the instance options."""
+        warning = 'pywikibot.bot.OptionHandler.availableOptions'
+        with suppress_warnings(warning.replace('.', r'\.') + ' is deprecated',
+                               category=FutureWarning):
+            old_options = self.availableOptions is not self.available_options
+        if old_options:  # old options were set and not updated
+            self.available_options = self.availableOptions
+            issue_deprecation_warning(warning, 'available_options',
+                                      since='20201006', future_warning=True)
+
+        valid_options = set(self.available_options)
+        received_options = set(options)
+
+        # self.opt contains all available options including defaults
+        self.opt = _OptionDict(self.__class__.__name__, self.available_options)
+        # update the options overridden from defaults
+        self.opt.update((opt, options[opt])
+                        for opt in received_options & valid_options)
+        for opt in received_options - valid_options:
+            pywikibot.warning('{} is not a valid option. It was ignored.'
+                              .format(opt))
+
+    @deprecated(_DEPRECATION_MSG, since='20201006', future_warning=True)
+    def getOption(self, option):  # pragma: no cover
+        """DEPRECATED. Get the current value of an option.
+
+        :param option: key defined in OptionHandler.available_options
+        :raise pywikibot.exceptions.Error: No valid option is given with
+            option parameter
+        """
+        return self.opt[option]
+
+
+class BaseBot(OptionHandler):
 
     """
     Generic Bot to be subclassed.
@@ -979,70 +1173,47 @@ class Bot(object):
     Bot will process each page in the generator, invoking the method treat()
     which must then be implemented by subclasses.
 
+    Each item processed by treat() must be a :py:obj:`pywikibot.page.BasePage`
+    type. Use init_page() to upcast the type. To enable other types, set
+    BaseBot.treat_page_type to an appropriate type; your bot should
+    derive from BaseBot in that case and handle site properties.
+
     If the subclass does not set a generator, or does not override
     treat() or run(), NotImplementedError is raised.
+
+    For bot options handling refer OptionHandler class above.
     """
 
-    # Bot configuration.
-    # Only the keys of the dict can be passed as init options
+    # Handler configuration.
     # The values are the default values
     # Extend this in subclasses!
-    availableOptions = {
-        'always': False,  # ask for confirmation when putting a page?
+
+    available_options = {
+        'always': False,  # By default ask for confirmation when putting a page
     }
 
     _current_page = None
 
     def __init__(self, **kwargs):
-        """
-        Only accept options defined in availableOptions.
+        """Only accept 'generator' and options defined in available_options.
 
-        @param kwargs: bot options
-        @type kwargs: dict
+        :param kwargs: bot options
+        :keyword generator: a generator processed by run method
         """
         if 'generator' in kwargs:
-            self.generator = kwargs.pop('generator')
+            if hasattr(self, 'generator'):
+                pywikibot.warn('{} has a generator already. Ignoring argument.'
+                               .format(self.__class__.__name__))
+            else:
+                self.generator = kwargs.pop('generator')
 
-        # TODO: add warning if site is specified and generator
-        # contains pages from a different site.
-        self._site = kwargs.pop('site', None)
-        self._sites = set([self._site] if self._site else [])
-
-        self.setOptions(**kwargs)
+        super().__init__(**kwargs)
 
         self._treat_counter = 0
         self._save_counter = 0
-
-    def setOptions(self, **kwargs):
-        """
-        Set the instance options.
-
-        @param kwargs: options
-        @type kwargs: dict
-        """
-        # contains the options overridden from defaults
-        self.options = {}
-
-        validOptions = set(self.availableOptions)
-        receivedOptions = set(kwargs)
-
-        for opt in receivedOptions & validOptions:
-            self.options[opt] = kwargs[opt]
-
-        for opt in receivedOptions - validOptions:
-            pywikibot.warning(u'%s is not a valid option. It was ignored.'
-                              % opt)
-
-    def getOption(self, option):
-        """
-        Get the current value of an option.
-
-        @param option: key defined in Bot.availableOptions
-        """
-        try:
-            return self.options.get(option, self.availableOptions[option])
-        except KeyError:
-            raise pywikibot.Error(u'%s is not a valid bot option.' % option)
+        self._skip_counter = 0
+        self._generator_completed = False
+        self.treat_page_type = pywikibot.page.BasePage  # default type
 
     @property
     def current_page(self):
@@ -1059,29 +1230,31 @@ class Bot(object):
 
         This also prevents the same title from being printed twice.
 
-        @param page: the working page
-        @type  page: pywikibot.Page
+        :param page: the working page
+        :type page: pywikibot.Page
         """
         if page != self._current_page:
             self._current_page = page
-            msg = u'Working on %r' % page.title()
+            msg = 'Working on {!r}'.format(page.title())
             if config.colorized_output:
                 log(msg)
-                stdout(u'\n\n>>> \03{lightpurple}%s\03{default} <<<'
-                       % page.title())
+                stdout(color_format('\n\n>>> {lightpurple}{0}{default} <<<',
+                                    page.title()))
             else:
                 stdout(msg)
 
     def user_confirm(self, question):
         """Obtain user response if bot option 'always' not enabled."""
-        if self.getOption('always'):
+        if self.opt.always:
             return True
 
         choice = pywikibot.input_choice(question,
                                         [('Yes', 'y'),
                                          ('No', 'N'),
-                                         ('All', 'a')],
-                                        default='N')
+                                         ('All', 'a'),
+                                         ('Quit', 'q')],
+                                        default='N',
+                                        automatic_quit=False)
 
         if choice == 'n':
             return False
@@ -1091,10 +1264,11 @@ class Bot(object):
 
         if choice == 'a':
             # Remember the choice
-            self.options['always'] = True
+            self.opt.always = True
 
         return True
 
+    @deprecate_arg('async', 'asynchronous')  # T106230
     @deprecated_args(comment='summary')
     def userPut(self, page, oldtext, newtext, **kwargs):
         """
@@ -1104,19 +1278,24 @@ class Bot(object):
         and puts the page if needed.
 
         Option used:
+
         * 'always'
 
         Keyword args used:
-        * 'async' - passed to page.save
+
+        * 'asynchronous' - passed to page.save
         * 'summary' - passed to page.save
         * 'show_diff' - show changes between oldtext and newtext (enabled)
         * 'ignore_save_related_errors' - report and ignore (disabled)
         * 'ignore_server_errors' - report and ignore (disabled)
+
+        :return: whether the page was saved successfully
+        :rtype: bool
         """
-        if oldtext == newtext:
-            pywikibot.output(u'No changes were needed on %s'
-                             % page.title(asLink=True))
-            return
+        if oldtext.rstrip() == newtext.rstrip():
+            pywikibot.output('No changes were needed on {}'
+                             .format(page.title(as_link=True)))
+            return False
 
         self.current_page = page
 
@@ -1126,31 +1305,33 @@ class Bot(object):
             pywikibot.showDiff(oldtext, newtext)
 
         if 'summary' in kwargs:
-            pywikibot.output(u'Edit summary: %s' % kwargs['summary'])
+            pywikibot.output('Edit summary: {}'.format(kwargs['summary']))
 
         page.text = newtext
-        self._save_page(page, page.save, **kwargs)
+        return self._save_page(page, page.save, **kwargs)
 
     def _save_page(self, page, func, *args, **kwargs):
         """
         Helper function to handle page save-related option error handling.
 
-        @param page: currently edited page
-        @param func: the function to call
-        @param args: passed to the function
-        @param kwargs: passed to the function
-        @kwarg ignore_server_errors: if True, server errors will be reported
+        :param page: currently edited page
+        :param func: the function to call
+        :param args: passed to the function
+        :param kwargs: passed to the function
+        :keyword ignore_server_errors: if True, server errors will be reported
           and ignored (default: False)
         @kwtype ignore_server_errors: bool
-        @kwarg ignore_save_related_errors: if True, errors related to
+        :keyword ignore_save_related_errors: if True, errors related to
         page save will be reported and ignored (default: False)
         @kwtype ignore_save_related_errors: bool
+        :return: whether the page was saved successfully
+        :rtype: bool
         """
         if not self.user_confirm('Do you want to accept these changes?'):
-            return
+            return False
 
-        if 'async' not in kwargs and self.getOption('always'):
-            kwargs['async'] = True
+        if 'asynchronous' not in kwargs and self.opt.always:
+            kwargs['asynchronous'] = True
 
         ignore_save_related_errors = kwargs.pop('ignore_save_related_errors',
                                                 False)
@@ -1159,46 +1340,226 @@ class Bot(object):
         try:
             func(*args, **kwargs)
             self._save_counter += 1
-        except pywikibot.PageSaveRelatedError as e:
+        except PageSaveRelatedError as e:
             if not ignore_save_related_errors:
                 raise
-            if isinstance(e, pywikibot.EditConflict):
-                pywikibot.output(u'Skipping %s because of edit conflict'
-                                 % page.title())
-            elif isinstance(e, pywikibot.SpamfilterError):
-                pywikibot.output(
-                    u'Cannot change %s because of blacklist entry %s'
-                    % (page.title(), e.url))
-            elif isinstance(e, pywikibot.LockedPage):
-                pywikibot.output(u'Skipping %s (locked page)'
-                                 % page.title())
+            if isinstance(e, EditConflictError):
+                pywikibot.output('Skipping {} because of edit conflict'
+                                 .format(page.title()))
+            elif isinstance(e, SpamblacklistError):
+                pywikibot.output('Cannot change {} because of blacklist '
+                                 'entry {}'.format(page.title(), e.url))
+            elif isinstance(e, LockedPageError):
+                pywikibot.output('Skipping {} (locked page)'
+                                 .format(page.title()))
             else:
-                pywikibot.error(
-                    u'Skipping %s because of a save related error: %s'
-                    % (page.title(), e))
-        except pywikibot.ServerError as e:
+                pywikibot.error('Skipping {} because of a save related '
+                                'error: {}'.format(page.title(), e))
+        except ServerError as e:
             if not ignore_server_errors:
                 raise
-            pywikibot.error(u'Server Error while processing %s: %s'
-                            % (page.title(), e))
+            pywikibot.error('Server Error while processing {}: {}'
+                            .format(page.title(), e))
+        else:
+            return True
+        return False
+
+    @deprecated('generator.close()', since='20200804')
+    def stop(self):  # pragma: no cover
+        """DEPRECATED. Stop iterating."""
+        pywikibot.output('Generator has been stopped.')
+        self.generator.close()
 
     def quit(self):
         """Cleanup and quit processing."""
         raise QuitKeyboardInterrupt
 
+    def exit(self):
+        """
+        Cleanup and exit processing.
+
+        Invoked when Bot.run() is finished.
+        Prints treat and save counters and informs whether the script
+        terminated gracefully or was halted by exception.
+        May be overridden by subclasses.
+        """
+        self.teardown()
+        if hasattr(self, '_start_ts'):
+            read_delta = pywikibot.Timestamp.now() - self._start_ts
+            read_seconds = int(read_delta.total_seconds())
+
+        # wait until pending threads finished but don't close the queue
+        pywikibot.stopme()
+
+        pywikibot.output('\n{} pages read'
+                         '\n{} pages written'
+                         '\n{} pages skipped'
+                         .format(self._treat_counter,
+                                 self._save_counter,
+                                 self._skip_counter))
+
+        if hasattr(self, '_start_ts'):
+            write_delta = pywikibot.Timestamp.now() - self._start_ts
+            write_seconds = int(write_delta.total_seconds())
+            if write_delta.days:
+                pywikibot.output(
+                    'Execution time: {d.days} days, {d.seconds} seconds'
+                    .format(d=write_delta))
+            else:
+                pywikibot.output('Execution time: {} seconds'
+                                 .format(write_delta.seconds))
+            if self._treat_counter:
+                pywikibot.output('Read operation time: {:.1f} seconds'
+                                 .format(read_seconds / self._treat_counter))
+            if self._save_counter:
+                pywikibot.output('Write operation time: {:.1f} seconds'
+                                 .format(write_seconds / self._save_counter))
+
+        # exc_info contains exception from self.run() while terminating
+        exc_info = sys.exc_info()
+        pywikibot.output('Script terminated ', newline=False)
+        if exc_info[0] is None or exc_info[0] is KeyboardInterrupt:
+            pywikibot.output('successfully.')
+        else:
+            pywikibot.output('by exception:\n')
+            pywikibot.exception()
+
+    def init_page(self, item):
+        """Initialize a generator item before treating.
+
+        Ensure that the result of init_page is always a pywikibot.Page object
+        even when the generator returns something else.
+
+        Also used to set the arrange the current site. This is called before
+        skip_page and treat.
+
+        :param item: any item from self.generator
+        :return: return the page object to be processed further
+        :rtype: pywikibot.Page
+        """
+        return item
+
+    def skip_page(self, page):
+        """Return whether treat should be skipped for the page.
+
+        *New in version 3.0.*
+
+        :param page: Page object to be processed
+        :type page: pywikibot.Page
+        """
+        return False
+
     def treat(self, page):
-        """Process one page (Abstract method)."""
-        raise NotImplementedError('Method %s.treat() not implemented.'
-                                  % self.__class__.__name__)
+        """Process one page (abstract method).
+
+        :param page: Page object to be processed
+        :type page: pywikibot.Page
+        """
+        raise NotImplementedError('Method {}.treat() not implemented.'
+                                  .format(self.__class__.__name__))
+
+    def setup(self):
+        """Some initial setup before run operation starts.
+
+        This can be used for reading huge parts from life wiki or file
+        operation which is more than just initialize the instance.
+        Invoked by run() before running through generator loop.
+
+        *New in version 3.0.*
+        """
+
+    def teardown(self):
+        """Some cleanups after run operation. Invoked by exit().
+
+        *New in version 3.0.*
+        """
+
+    def run(self):
+        """Process all pages in generator.
+
+        :raise AssertionError: "page" is not a pywikibot.page.BasePage object
+        """
+        self._start_ts = pywikibot.Timestamp.now()
+        self.setup()
+
+        if not hasattr(self, 'generator'):
+            raise NotImplementedError('Variable {}.generator not set.'
+                                      .format(self.__class__.__name__))
+        if not isinstance(self.generator, Generator):
+            # to provide close() method
+            self.generator = (item for item in self.generator)
+        try:
+            for item in self.generator:
+                # preprocessing of the page
+                initialized_page = self.init_page(item)
+                if initialized_page is None:
+                    issue_deprecation_warning(
+                        'Returning None from init_page() method',
+                        'return a pywikibot.page.BasePage object',
+                        since='20200406')
+                    page = item
+                else:
+                    page = initialized_page
+
+                # validate page type
+                if not isinstance(page, self.treat_page_type):
+                    raise TypeError('"page" is not a {!r} object but {}.'
+                                    .format(self.treat_page_type,
+                                            page.__class__.__name__))
+
+                if self.skip_page(page):
+                    self._skip_counter += 1
+                    continue
+
+                # Process the page
+                self.treat(page)
+                self._treat_counter += 1
+
+            self._generator_completed = True
+        except QuitKeyboardInterrupt:
+            pywikibot.output('\nUser quit {} bot run...'
+                             .format(self.__class__.__name__))
+        except KeyboardInterrupt:
+            if config.verbose_output:
+                raise
+
+            pywikibot.output('\nKeyboardInterrupt during {} bot run...'
+                             .format(self.__class__.__name__))
+        finally:
+            self.exit()
+
+
+# TODO: Deprecate Bot class as self.site may be the site of the page or may be
+# a site previously defined
+class Bot(BaseBot):
+
+    """
+    Generic bot subclass for multiple sites.
+
+    If possible the MultipleSitesBot or SingleSiteBot classes should be used
+    instead which specifically handle multiple or single sites.
+    """
+
+    def __init__(self, site=None, **kwargs):
+        """Create a Bot instance and initialize cached sites."""
+        # TODO: add warning if site is specified and generator
+        # contains pages from a different site.
+        # Do not set self._site to None if we already have it
+        if site is not None:
+            self._site = site
+        elif not hasattr(self, '_site'):
+            self._site = None
+        self._sites = set([self._site] if self._site else [])
+
+        super().__init__(**kwargs)
 
     @property
     def site(self):
-        """Site that the bot is using."""
+        """Get the current site."""
         if not self._site:
             warning('Bot.site was not set before being retrieved.')
-            # TODO: peak at a page from the generator to determine the site
             self.site = pywikibot.Site()
-            warning('Using the default site: %s' % self.site)
+            warning('Using the default site: {}'.format(self.site))
         return self._site
 
     @site.setter
@@ -1214,82 +1575,191 @@ class Bot(object):
             return
 
         if site not in self._sites:
-            log(u'LOADING SITE %s VERSION: %s'
-                % (site, site.version()))
+            log('LOADING SITE {} VERSION: {}'.format(site, site.mw_version))
 
             self._sites.add(site)
             if len(self._sites) == 2:
-                log('%s uses multiple sites' % self.__class__.__name__)
+                log('{} uses multiple sites'.format(self.__class__.__name__))
         if self._site and self._site != site:
-            log('%s: changing site from %s to %s'
-                % (self.__class__.__name__, self._site, site))
+            log('{}: changing site from {} to {}'
+                .format(self.__class__.__name__, self._site, site))
         self._site = site
 
     def run(self):
-        """Process all pages in generator."""
-        if not hasattr(self, 'generator'):
-            raise NotImplementedError('Variable %s.generator not set.'
-                                      % self.__class__.__name__)
-
+        """Check if it automatically updates the site before run."""
         # This check is to remove the possibility that the superclass changing
         # self.site causes bugs in subclasses.
         # If the subclass has set self.site before run(), it may be that the
         # bot processes pages on sites other than self.site, and therefore
-        # this method cant alter self.site.  To use this functionality, don't
+        # this method can't alter self.site. To use this functionality, don't
         # set self.site in __init__, and use page.site in treat().
-        auto_update_site = not self._site
-        if not auto_update_site:
-            warning(
-                '%s.__init__ set the Bot.site property; this is only needed '
-                'when the Bot accesses many sites.' % self.__class__.__name__)
+        self._auto_update_site = not self._site
+        if not self._auto_update_site:
+            warning('{}.__init__ set the Bot.site property; this is only '
+                    'needed when the Bot accesses many sites.'
+                    .format(self.__class__.__name__))
         else:
-            log('Bot is managing the %s.site property in run()'
-                % self.__class__.__name__)
+            log('Bot is managing the {}.site property in run()'
+                .format(self.__class__.__name__))
+        super().run()
 
-        maxint = 0
-        if sys.version_info[0] == 2:
-            maxint = sys.maxint
+    def init_page(self, item):
+        """Update site before calling treat."""
+        # When in auto update mode, set the site when it changes,
+        # so subclasses can hook onto changes to site.
+        page = super().init_page(item)
+        if (self._auto_update_site
+                and (not self._site or page.site != self.site)):
+            self.site = page.site
+        return page
 
-        try:
-            for page in self.generator:
-                # When in auto update mode, set the site when it changes,
-                # so subclasses can hook onto changes to site.
-                if (auto_update_site and
-                        (not self._site or page.site != self.site)):
-                    self.site = page.site
 
-                # Process the page
-                self.treat(page)
+class SingleSiteBot(BaseBot):
 
-                self._treat_counter += 1
-                if maxint and self._treat_counter == maxint:
-                    # Warn the user that the bot may not function correctly
-                    pywikibot.error(
-                        '\n%s: page count reached Python 2 sys.maxint (%d).\n'
-                        'Python 3 should be used to process very large batches'
-                        % (self.__class__.__name__, sys.maxint))
-        except QuitKeyboardInterrupt:
-            pywikibot.output('\nUser quit %s bot run...' %
-                             self.__class__.__name__)
-        except KeyboardInterrupt:
-            if config.verbose_output:
-                raise
+    """
+    A bot only working on one site and ignoring the others.
+
+    If no site is given from the start it'll use the first page's site. Any
+    page after the site has been defined and is not on the defined site will be
+    ignored.
+    """
+
+    def __init__(self, site=True, **kwargs):
+        """
+        Create a SingleSiteBot instance.
+
+        :param site: If True it'll be set to the configured site using
+            pywikibot.Site.
+        :type site: True or None or Site
+        """
+        if site is True:
+            site = pywikibot.Site()
+        self._site = site
+        super().__init__(**kwargs)
+
+    @property
+    def site(self):
+        """Site that the bot is using."""
+        if not self._site:
+            raise ValueError('The site has not been defined yet.')
+        return self._site
+
+    @site.setter
+    def site(self, value):
+        """Set the current site but warns if different."""
+        if self._site:
+            # Warn in any case where the site is (probably) changed after
+            # setting it the first time. The appropriate variant is not to use
+            # self.site at all or define it once and never change it again
+            if self._site == value:
+                pywikibot.warning('Defined site without changing it.')
             else:
-                pywikibot.output('\nKeyboardInterrupt during %s bot run...' %
-                                 self.__class__.__name__)
+                pywikibot.warning('Changed the site from "{}" to '
+                                  '"{}"'.format(self._site, value))
+        self._site = value
+
+    def init_page(self, item):
+        """Set site if not defined."""
+        page = super().init_page(item)
+        if not self._site:
+            self.site = page.site
+        return page
+
+    def skip_page(self, page):
+        """Skip page if it is not on the defined site."""
+        if page.site != self.site:
+            pywikibot.warning(
+                fill('Skipped {page} due to: '
+                     'The bot is on site "{site}" but the page on '
+                     'site "{page.site}"'.format(site=self.site, page=page)))
+            return True
+        return super().skip_page(page)
 
 
-class CurrentPageBot(Bot):
+class MultipleSitesBot(BaseBot):
 
-    """A bot which automatically sets 'current_page' on each treat()."""
+    """
+    A bot class working on multiple sites.
+
+    The bot should accommodate for that case and not store site specific
+    information on only one site.
+
+    *New in version 6.2:* site attribute has been dropped.
+    """
+
+
+class ConfigParserBot(BaseBot):
+
+    """A bot class that can read options from scripts.ini file.
+
+    All options must be predefined in available_options dictionary. The type
+    of these options is responsible for the correct interpretation of the
+    options type given by the .ini file. They can be interpreted as bool,
+    int, float or str (default). The settings file may be like::
+
+        [add_text]
+        # edit summary for the bot.
+        summary = Bot: Aggiungo template Categorizzare
+
+        [shell] ; Shell options
+        always: true
+
+    The option values are interpreted in this order:
+
+    1. `available_options` default setting
+    2. `script.ini options` settings
+    3. command line arguments
+
+    *New in version 3.0.*
+    """
+
+    INI = 'scripts.ini'
+
+    def set_options(self, **kwargs):
+        """Read settings from scripts.ini file."""
+        conf = configparser.ConfigParser(inline_comment_prefixes=[';'])
+        section = calledModuleName()
+
+        if (conf.read(self.INI) == [self.INI] and conf.has_section(section)):
+            pywikibot.output('Reading settings from {} file.'.format(self.INI))
+            options = {}
+            for option, value in self.available_options.items():
+                if not conf.has_option(section, option):
+                    continue
+                # use a convenience parser method, default to get()
+                default = conf.get
+                value_type = type(value).__name__
+                if value_type == 'bool':
+                    method = conf.getboolean
+                else:
+                    method = getattr(conf, 'get' + value_type, default)
+                options[option] = method(section, option)
+            for opt in set(conf.options(section)) - set(options):
+                pywikibot.warning(
+                    '"{}" is not a valid option. It was ignored.'.format(opt))
+            options.update(kwargs)
+        else:
+            options = kwargs
+
+        super().set_options(**options)
+
+
+class CurrentPageBot(BaseBot):
+
+    """
+    A bot which automatically sets 'current_page' on each treat().
+
+    This class should be always used together with either the MultipleSitesBot
+    or SingleSiteBot class as there is no site management in this class.
+    """
 
     ignore_save_related_errors = True
     ignore_server_errors = False
 
     def treat_page(self):
         """Process one page (Abstract method)."""
-        raise NotImplementedError('Method %s.treat_page() not implemented.'
-                                  % self.__class__.__name__)
+        raise NotImplementedError('Method {}.treat_page() not implemented.'
+                                  .format(self.__class__.__name__))
 
     def treat(self, page):
         """Set page to current page and treat that page."""
@@ -1297,52 +1767,77 @@ class CurrentPageBot(Bot):
         self.treat_page()
 
     @deprecated_args(comment='summary')
-    def put_current(self, new_text, ignore_save_related_errors=None,
-                    ignore_server_errors=None, **kwargs):
+    def put_current(self, new_text: str, ignore_save_related_errors=None,
+                    ignore_server_errors=None, **kwargs) -> bool:
         """
-        Call L{Bot.userPut} but use the current page.
+        Call :py:obj:`Bot.userPut` but use the current page.
 
         It compares the new_text to the current page text.
 
-        @param new_text: The new text
-        @type new_text: basestring
-        @param ignore_save_related_errors: Ignore save related errors and
+        :param new_text: The new text
+        :param ignore_save_related_errors: Ignore save related errors and
             automatically print a message. If None uses this instances default.
-        @type ignore_save_related_errors: bool or None
-        @param ignore_server_errors: Ignore server errors and automatically
+        :type ignore_save_related_errors: bool or None
+        :param ignore_server_errors: Ignore server errors and automatically
             print a message. If None uses this instances default.
-        @type ignore_server_errors: bool or None
-        @param kwargs: Additional parameters directly given to L{Bot.userPut}.
-        @type kwargs: dict
+        :type ignore_server_errors: bool or None
+        :param kwargs: Additional parameters directly given to
+            :py:obj:`Bot.userPut`.
+        :return: whether the page was saved successfully
         """
         if ignore_save_related_errors is None:
             ignore_save_related_errors = self.ignore_save_related_errors
         if ignore_server_errors is None:
             ignore_server_errors = self.ignore_server_errors
-        self.userPut(self.current_page, self.current_page.text, new_text,
-                     ignore_save_related_errors=ignore_save_related_errors,
-                     ignore_server_errors=ignore_server_errors,
-                     **kwargs)
+        return self.userPut(
+            self.current_page, self.current_page.text, new_text,
+            ignore_save_related_errors=ignore_save_related_errors,
+            ignore_server_errors=ignore_server_errors,
+            **kwargs)
+
+
+class AutomaticTWSummaryBot(CurrentPageBot):
+
+    """
+    A class which automatically defines ``summary`` for ``put_current``.
+
+    The class must defined a ``summary_key`` string which contains the
+    i18n key for :py:obj:`pywikibot.i18n.twtranslate`. It can also
+    override the ``summary_parameters`` property to specify any
+    parameters for the translated message.
+    """
+
+    summary_key = None  # must be defined in subclasses
+
+    @property
+    def summary_parameters(self):
+        """A dictionary of all parameters for i18n."""
+        return {}
+
+    def put_current(self, *args, **kwargs):
+        """Defining a summary if not already defined and then call original."""
+        if not kwargs.get('summary'):
+            if self.summary_key is None:
+                raise ValueError('The summary_key must be set.')
+            summary = i18n.twtranslate(self.current_page.site,
+                                       self.summary_key,
+                                       self.summary_parameters)
+            pywikibot.log('Use automatic summary message "{}"'.format(summary))
+            kwargs['summary'] = summary
+        super().put_current(*args, **kwargs)
 
 
 class ExistingPageBot(CurrentPageBot):
 
     """A CurrentPageBot class which only treats existing pages."""
 
-    def treat(self, page):
-        """Treat page if it exists and handle NoPage from it."""
+    def skip_page(self, page):
+        """Treat page if it exists and handle NoPageError."""
         if not page.exists():
-            pywikibot.warning('Page "{0}" does not exist on {1}.'.format(
-                page.title(), page.site))
-            return
-        try:
-            super(ExistingPageBot, self).treat(page)
-        except pywikibot.NoPage as e:
-            if e.page != page:
-                raise
-            pywikibot.warning(
-                'During handling of page "{0}" on {1} a NoPage exception was '
-                'raised.'.format(page.title(), page.site))
+            pywikibot.warning('Page {page} does not exist on {page.site}.'
+                              .format(page=page))
+            return True
+        return super().skip_page(page)
 
 
 class FollowRedirectPageBot(CurrentPageBot):
@@ -1353,88 +1848,90 @@ class FollowRedirectPageBot(CurrentPageBot):
         """Treat target if page is redirect and the page otherwise."""
         if page.isRedirectPage():
             page = page.getRedirectTarget()
-        super(FollowRedirectPageBot, self).treat(page)
+        super().treat(page)
 
 
 class CreatingPageBot(CurrentPageBot):
 
     """A CurrentPageBot class which only treats nonexistent pages."""
 
-    def treat(self, page):
+    def skip_page(self, page):
         """Treat page if doesn't exist."""
         if page.exists():
-            pywikibot.warning('Page "{0}" does already exist on {1}.'.format(
-                page.title(), page.site))
-            return
-        super(CreatingPageBot, self).treat(page)
+            pywikibot.warning('Page {page} does already exist on {page.site}.'
+                              .format(page=page))
+            return True
+        return super().skip_page(page)
 
 
 class RedirectPageBot(CurrentPageBot):
 
     """A RedirectPageBot class which only treats redirects."""
 
-    def treat(self, page):
-        """Treat only redirect pages and handle IsNotRedirectPage from it."""
+    def skip_page(self, page):
+        """Treat only redirect pages and handle IsNotRedirectPageError."""
         if not page.isRedirectPage():
-            pywikibot.warning('Page "{0}" on {1} is skipped because it is not '
-                              'a redirect'.format(page.title(), page.site))
-            return
-        try:
-            super(RedirectPageBot, self).treat(page)
-        except pywikibot.IsNotRedirectPage as e:
-            if e.page != page:
-                raise
             pywikibot.warning(
-                'During handling of page "{0}" on {1} a IsNotRedirectPage '
-                'exception was raised.'.format(page.title(), page.site))
+                'Page {page} on {page.site} is skipped because it is '
+                'not a redirect'.format(page=page))
+            return True
+        return super().skip_page(page)
 
 
 class NoRedirectPageBot(CurrentPageBot):
 
     """A NoRedirectPageBot class which only treats non-redirects."""
 
-    def treat(self, page):
-        """Treat only non-redirect pages and handle IsRedirectPage from it."""
+    def skip_page(self, page):
+        """Treat only non-redirect pages and handle IsRedirectPageError."""
         if page.isRedirectPage():
-            pywikibot.warning('Page "{0}" on {1} is skipped because it is a '
-                              'redirect'.format(page.title(), page.site))
-            return
-        try:
-            super(NoRedirectPageBot, self).treat(page)
-        except pywikibot.IsRedirectPage as e:
-            if e.page != page:
-                raise
             pywikibot.warning(
-                'During handling of page "{0}" on {1} a IsRedirectPage '
-                'exception was raised.'.format(page.title(), page.site))
+                'Page {page} on {page.site} is skipped because it is '
+                'a redirect'.format(page=page))
+            return True
+        return super().skip_page(page)
 
 
-class WikidataBot(Bot):
+class WikidataBot(Bot, ExistingPageBot):
 
     """
     Generic Wikidata Bot to be subclassed.
 
-    Source claims (P143) can be created for specific sites.
+    Source claims (P143) can be created for specific sites
+
+    :cvar use_from_page: If True (default) it will apply ItemPage.fromPage
+        for every item. If False it assumes that the pages are actually
+        already ItemPage (page in treat_page_and_item will be None).
+        If None it'll use ItemPage.fromPage when the page is not in the site's
+        item namespace.
+
+    :type use_from_page: bool, None
+
+    :cvar treat_missing_item: Whether pages without items should be treated.
+        Note that this is checked after create_missing_item.
+
+    :type treat_missing_item: bool
+
+    :ivar create_missing_item: If True, new items will be created if the
+        current page doesn't have one. Subclasses should override this in the
+        initializer with a bool value or using self.opt attribute.
+
+    :type create_missing_item: bool
     """
 
-    def __init__(self, **kwargs):
-        """
-        Constructor of the WikidataBot.
+    use_from_page = True
+    treat_missing_item = False
 
-        @kwarg use_from_page: If True (default) it will apply ItemPage.fromPage
-            for every item. If False it assumes that the pages are actually
-            already ItemPage (page in treat will be None). If None it'll use
-            ItemPage.fromPage when the page is not in the site's item
-            namespace.
-        @kwtype use_from_page: bool, None
-        """
-        self.use_from_page = kwargs.pop('use_from_page', True)
-        super(WikidataBot, self).__init__(**kwargs)
+    @deprecated_args(use_from_page=True)
+    def __init__(self, **kwargs):
+        """Initializer of the WikidataBot."""
+        self.create_missing_item = False
+        super().__init__(**kwargs)
         self.site = pywikibot.Site()
         self.repo = self.site.data_repository()
         if self.repo is None:
-            raise pywikibot.exceptions.WikiBaseError(
-                '%s is not connected to a data repository' % self.site)
+            raise WikiBaseError(
+                '{} is not connected to a data repository'.format(self.site))
 
     def cacheSources(self):
         """
@@ -1442,12 +1939,13 @@ class WikidataBot(Bot):
 
         It is stored internally and reused by getSource()
         """
-        page = pywikibot.Page(self.repo, u'List of wikis/python', ns=4)
+        page = pywikibot.Page(self.repo, 'List of wikis/python', ns=4)
         self.source_values = json.loads(page.get())
         for family_code, family in self.source_values.items():
             for source_lang in family:
-                self.source_values[family_code][source_lang] = pywikibot.ItemPage(self.repo,
-                                                                                  family[source_lang])
+                self.source_values[
+                    family_code][source_lang] = pywikibot.ItemPage(
+                        self.repo, family[source_lang])
 
     def get_property_by_name(self, property_name):
         """
@@ -1456,121 +1954,274 @@ class WikidataBot(Bot):
         Method first uses site.search() and if the property isn't found, then
         asks user to provide the property ID.
 
-        @param property_name: property to find
-        @type property_name: str
+        :param property_name: property to find
+        :type property_name: str
         """
         ns = self.site.data_repository().property_namespace
-        for page in self.site.search(property_name, step=1, total=1,
-                                     namespaces=ns):
+        for page in self.site.search(property_name, total=1, namespaces=ns):
             page = pywikibot.PropertyPage(self.site.data_repository(),
                                           page.title())
-            pywikibot.output(u"Assuming that %s property is %s." %
-                             (property_name, page.id))
+            pywikibot.output('Assuming that {} property is {}.'
+                             .format(property_name, page.id))
             return page.id
-        return pywikibot.input(u'Property %s was not found. Please enter the '
-                               u'property ID (e.g. P123) of it:'
-                               % property_name).upper()
+        return pywikibot.input('Property {} was not found. Please enter the '
+                               'property ID (e.g. P123) of it:'
+                               .format(property_name).upper())
 
-    def user_edit_entity(self, item, data=None, **kwargs):
+    def user_edit_entity(self, entity, data=None,
+                         ignore_save_related_errors=None,
+                         ignore_server_errors=None, **kwargs):
         """
         Edit entity with data provided, with user confirmation as required.
 
-        @param item: page to be edited
-        @type item: ItemPage
-        @param data: data to be saved, or None if the diff should be created
+        :param entity: page to be edited
+        :type entity: WikibasePage
+        :param data: data to be saved, or None if the diff should be created
           automatically
-        @kwarg summary: revision comment, passed to ItemPage.editEntity
-        @kwtype summary: str
-        @kwarg show_diff: show changes between oldtext and newtext (default:
+        :param ignore_save_related_errors: Ignore save related errors and
+            automatically print a message. If None uses this instances default.
+        :type ignore_save_related_errors: bool or None
+        :param ignore_server_errors: Ignore server errors and automatically
+            print a message. If None uses this instances default.
+        :type ignore_server_errors: bool or None
+        :keyword summary: revision comment, passed to ItemPage.editEntity
+        :type summary: str
+        :keyword show_diff: show changes between oldtext and newtext (default:
           True)
-        @kwtype show_diff: bool
-        @kwarg ignore_server_errors: if True, server errors will be reported
-          and ignored (default: False)
-        @kwtype ignore_server_errors: bool
-        @kwarg ignore_save_related_errors: if True, errors related to
-        page save will be reported and ignored (default: False)
-        @kwtype ignore_save_related_errors: bool
+        :type show_diff: bool
+        :return: whether the item was saved successfully
+        :rtype: bool
         """
-        self.current_page = item
-
+        if ignore_save_related_errors is None:
+            ignore_save_related_errors = self.ignore_save_related_errors
+        if ignore_server_errors is None:
+            ignore_server_errors = self.ignore_server_errors
         show_diff = kwargs.pop('show_diff', True)
         if show_diff:
             if data is None:
-                diff = item.toJSON(diffto=(
-                    item._content if hasattr(item, '_content') else None))
+                diff = entity.toJSON(diffto=getattr(entity, '_content', None))
             else:
-                diff = pywikibot.WikibasePage._normalizeData(data)
+                diff = entity._normalizeData(data)
             pywikibot.output(json.dumps(diff, indent=4, sort_keys=True))
 
         if 'summary' in kwargs:
-            pywikibot.output(u'Change summary: %s' % kwargs['summary'])
+            pywikibot.output('Change summary: {}'.format(kwargs['summary']))
 
-        # TODO async in editEntity should actually have some effect (bug T86074)
         # TODO PageSaveRelatedErrors should be actually raised in editEntity
         # (bug T86083)
-        self._save_page(item, item.editEntity, data, **kwargs)
+        return self._save_page(
+            entity, entity.editEntity, data,
+            ignore_save_related_errors=ignore_save_related_errors,
+            ignore_server_errors=ignore_server_errors, **kwargs)
+
+    def user_add_claim(self, item, claim, source=None, bot=True, **kwargs):
+        """
+        Add a claim to an item, with user confirmation as required.
+
+        :param item: page to be edited
+        :type item: pywikibot.ItemPage
+        :param claim: claim to be saved
+        :type claim: pywikibot.Claim
+        :param source: site where the claim comes from
+        :type source: pywikibot.site.APISite
+        :param bot: whether to flag as bot (if possible)
+        :type bot: bool
+        :keyword ignore_server_errors: if True, server errors will be reported
+          and ignored (default: False)
+        :type ignore_server_errors: bool
+        :keyword ignore_save_related_errors: if True, errors related to
+          page save will be reported and ignored (default: False)
+        :type ignore_save_related_errors: bool
+        :return: whether the item was saved successfully
+        :rtype: bool
+        """
+        self.current_page = item
+
+        if source:
+            sourceclaim = self.getSource(source)
+            if sourceclaim:
+                claim.addSource(sourceclaim)
+
+        pywikibot.output('Adding {} --> {}'.format(claim.getID(),
+                                                   claim.getTarget()))
+        return self._save_page(item, item.addClaim, claim, bot=bot, **kwargs)
 
     def getSource(self, site):
         """
         Create a Claim usable as a source for Wikibase statements.
 
-        @param site: site that is the source of assertions.
-        @type site: Site
+        :param site: site that is the source of assertions.
+        :type site: Site
 
-        @return: Claim
+        :return: pywikibot.Claim or None
         """
-        if site.family.name in self.source_values and site.code in self.source_values[site.family.name]:
+        source = None
+        item = i18n.translate(site, self.source_values)
+        if item:
             source = pywikibot.Claim(self.repo, 'P143')
-            source.setTarget(self.source_values.get(site.family.name).get(site.code))
-            return source
+            source.setTarget(item)
+        return source
 
-    def run(self):
-        """Process all pages in generator."""
-        if not hasattr(self, 'generator'):
-            raise NotImplementedError('Variable %s.generator not set.'
-                                      % self.__class__.__name__)
+    def user_add_claim_unless_exists(
+            self, item, claim, exists_arg='', source=None,
+            logger_callback=log, **kwargs):
+        """
+        Decorator of :py:obj:`user_add_claim`.
 
-        treat_missing_item = hasattr(self, 'treat_missing_item')
+        Before adding a new claim, it checks if we can add it, using provided
+        filters.
 
-        try:
-            for page in self.generator:
-                if not page.exists():
-                    pywikibot.output('%s doesn\'t exist.' % page)
+        :see: documentation of :py:obj:`claimit.py<scripts.claimit>`
+        :param exists_arg: pattern for merging existing claims with new ones
+        :type exists_arg: str
+        :param logger_callback: function logging the output of the method
+        :type logger_callback: callable
+        :return: whether the claim could be added
+        :rtype: bool
+        """
+        # Existing claims on page of same property
+        for existing in item.get().get('claims').get(claim.getID(), []):
+            # If claim with same property already exists...
+            if 'p' not in exists_arg:
+                logger_callback(
+                    'Skipping {} because claim with same property '
+                    'already exists'.format(claim.getID()))
+                log('Use -exists:p option to override this behavior')
+                break
+
+            if not existing.target_equals(claim.getTarget()):
+                continue
+
+            # If some attribute of the claim being added
+            # matches some attribute in an existing claim of
+            # the same property, skip the claim, unless the
+            # 'exists' argument overrides it.
+            if 't' not in exists_arg:
+                logger_callback(
+                    'Skipping {} because claim with same target already exists'
+                    .format(claim.getID()))
+                log("Append 't' to -exists argument to override this behavior")
+                break
+
+            if 'q' not in exists_arg and not existing.qualifiers:
+                logger_callback(
+                    'Skipping {} because claim without qualifiers already '
+                    'exists'.format(claim.getID()))
+                log("Append 'q' to -exists argument to override this behavior")
+                break
+
+            if ('s' not in exists_arg or not source) and not existing.sources:
+                logger_callback(
+                    'Skipping {} because claim without source already exists'
+                    .format(claim.getID(),))
+                log("Append 's' to -exists argument to override this behavior")
+                break
+
+            if ('s' not in exists_arg and source
+                and any(source.getID() in ref
+                        and all(snak.target_equals(source.getTarget())
+                                for snak in ref[source.getID()])
+                        for ref in existing.sources)):
+                logger_callback(
+                    'Skipping {} because claim with the same source already '
+                    'exists'.format(claim.getID()))
+                log("Append 's' to -exists argument to override this behavior")
+                break
+        else:
+            return self.user_add_claim(item, claim, source, **kwargs)
+
+        return False
+
+    def create_item_for_page(self, page, data=None, summary=None, **kwargs):
+        """
+        Create an ItemPage with the provided page as the sitelink.
+
+        :param page: the page for which the item will be created
+        :type page: pywikibot.Page
+        :param data: additional data to be included in the new item (optional).
+            Note that data created from the page have higher priority.
+        :type data: dict
+        :param summary: optional edit summary to replace the default one
+        :type summary: str
+
+        :return: pywikibot.ItemPage or None
+        """
+        if not summary:
+            # FIXME: i18n
+            summary = 'Bot: New item with sitelink from {}'.format(
+                      page.title(as_link=True, insite=self.repo))
+
+        if data is None:
+            data = {}
+        data.setdefault('sitelinks', {}).update({
+            page.site.dbName(): {
+                'site': page.site.dbName(),
+                'title': page.title()
+            }
+        })
+        data.setdefault('labels', {}).update({
+            page.site.lang: {
+                'language': page.site.lang,
+                'value': page.title(without_brackets=page.namespace() == 0)
+            }
+        })
+        pywikibot.output('Creating item for {}...'.format(page))
+        item = pywikibot.ItemPage(page.site.data_repository())
+        kwargs.setdefault('show_diff', False)
+        result = self.user_edit_entity(item, data, summary=summary, **kwargs)
+        if result:
+            return item
+        return None
+
+    def treat_page(self):
+        """Treat a page."""
+        page = self.current_page
+        if self.use_from_page is True:
+            try:
+                item = pywikibot.ItemPage.fromPage(page)
+            except NoPageError:
+                item = None
+        else:
+            if isinstance(page, pywikibot.ItemPage):
+                item = page
+                page = None
+            else:
                 # FIXME: Hack because 'is_data_repository' doesn't work if
                 #        site is the APISite. See T85483
                 data_site = page.site.data_repository()
-                if (data_site.family == page.site.family and
-                        data_site.code == page.site.code):
+                if (data_site.family == page.site.family
+                        and data_site.code == page.site.code):
                     is_item = page.namespace() == data_site.item_namespace.id
                 else:
                     is_item = False
-                if self.use_from_page is not True and is_item:
+                if is_item:
                     item = pywikibot.ItemPage(data_site, page.title())
-                    item.get()
-                elif self.use_from_page is False:
-                    pywikibot.error('{0} is not in the item namespace but '
-                                    'must be an item.'.format(page))
-                    continue
+                    page = None
                 else:
                     try:
                         item = pywikibot.ItemPage.fromPage(page)
-                    except pywikibot.NoPage:
+                    except NoPageError:
                         item = None
-                if not item:
-                    if not treat_missing_item:
-                        pywikibot.output(
-                            '%s doesn\'t have a wikidata item.' % page)
-                        # TODO: Add an option to create the item
-                        continue
-                self.treat(page, item)
-        except QuitKeyboardInterrupt:
-            pywikibot.output('\nUser quit %s bot run...' %
-                             self.__class__.__name__)
-        except KeyboardInterrupt:
-            if config.verbose_output:
-                raise
-            else:
-                pywikibot.output('\nKeyboardInterrupt during %s bot run...' %
-                                 self.__class__.__name__)
-        except Exception as e:
-                pywikibot.exception(msg=e, tb=True)
+                    if self.use_from_page is False:
+                        pywikibot.error('{} is not in the item namespace but '
+                                        'must be an item.'.format(page))
+                        return
+
+        if not item and self.create_missing_item:
+            item = self.create_item_for_page(page, asynchronous=False)
+
+        if not item and not self.treat_missing_item:
+            pywikibot.output("{} doesn't have a Wikidata item.".format(page))
+            return
+
+        self.treat_page_and_item(page, item)
+
+    def treat_page_and_item(self, page, item):
+        """
+        Treat page together with its item (if it exists).
+
+        Must be implemented in subclasses.
+        """
+        raise NotImplementedError('Method {}.treat_page_and_item() not '
+                                  'implemented.'
+                                  .format(self.__class__.__name__))

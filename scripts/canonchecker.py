@@ -2,7 +2,8 @@
 import pywikibot
 from pywikibot import pagegenerators
 from pywikibot.textlib import removeLanguageLinks, removeCategoryLinks, removeDisabledParts
-from pywikibot.data.api import Request, APIError
+from pywikibot.data.api import Request
+from pywikibot.exceptions import APIError
 import time
 import codecs
 import re
@@ -106,7 +107,7 @@ def main(*args):
                             query = Request(action="query", site=page.site, prop=['info'], titles=title_list)
                             data = query.submit()
                         except:
-                            print ": Sleeping for 2 seconds"
+                            print(": Sleeping for 2 seconds")
                             num_requests -= 1
                             time.sleep(2)
                         finally:
@@ -114,7 +115,7 @@ def main(*args):
                                 num_requests = 0
 
                     if not data:
-                        print "ERROR"
+                        print("ERROR")
                         failed.append('|'.join(titles))
                         continue
 
@@ -132,8 +133,8 @@ def main(*args):
                             else:
                                 skip.add(p['title'])
                         except KeyError:
-                            print "Error encountered while processing page"
-                            print p
+                            print("Error encountered while processing page")
+                            print(p)
 
                 # for match in Rlink.finditer(this_text):
                 #     title = match.group('title')
@@ -169,7 +170,7 @@ def main(*args):
                 #             skip.add(title)
                 #         store = False
         except KeyboardInterrupt:
-            print "\nAborting run"
+            print("\nAborting run")
         finally:
             write_to_file("result_1.txt", result_1)
             write_to_file("redirects.txt", result_2)

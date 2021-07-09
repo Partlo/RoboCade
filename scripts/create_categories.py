@@ -73,8 +73,6 @@ class CreateCategoriesBot(Bot):
                 pywikibot.output(u'Skipping %s due to edit conflict' % newpage.title())
             except pywikibot.ServerError:
                 pywikibot.output(u'Skipping %s due to server error' % newpage.title())
-            except pywikibot.PageNotSaved as error:
-                pywikibot.output(u'Error putting page: %s' % error.args)
         else:
             # FIXME: Add overwrite option
             pywikibot.output(u'%s already exists, skipping' % newpage.title())

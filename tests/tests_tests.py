@@ -1,18 +1,13 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 """Tests for the tests package."""
 #
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2021
 #
 # Distributed under the terms of the MIT license.
-from __future__ import unicode_literals
+import unittest
+from contextlib import suppress
 
-__version__ = '$Id$'
-
-import pywikibot
-
-from tests.aspects import unittest, TestCase
-from tests.utils import allowed_failure
+from tests.aspects import TestCase
 
 
 class HttpServerProblemTestCase(TestCase):
@@ -28,31 +23,53 @@ class HttpServerProblemTestCase(TestCase):
     def test_502(self):
         """Test a HTTP 502 response using http://httpbin.org/status/502."""
         self.fail('The test framework should skip this test.')
-        pass
 
 
-class TestPageAssert(TestCase):
+class TestLengthAssert(TestCase):
 
-    """Test page assertion methods."""
+    """Test length assertion methods."""
 
-    family = 'wikipedia'
-    code = 'en'
+    net = False
 
-    dry = True
+    seq1 = ('foo', 'bar', 'baz')
+    seq2 = 'foo'
 
-    @allowed_failure
-    def test_assertPageTitlesEqual(self):
-        """Test assertPageTitlesEqual shows the second page title and '...'."""
-        pages = [pywikibot.Page(self.site, 'Foo'),
-                 pywikibot.Page(self.site, 'Bar'),
-                 pywikibot.Page(self.site, 'Baz')]
-        self.assertPageTitlesEqual(pages,
-                                   ['Foo'],
-                                   self.site)
+    def test_assert_is_empty(self):
+        """Test assertIsEmpty method."""
+        self.assertIsEmpty([])
+        self.assertIsEmpty('')
+
+    @unittest.expectedFailure
+    def test_assert_is_empty_fail(self):
+        """Test assertIsEmpty method failing."""
+        self.assertIsEmpty(self.seq1)
+        self.assertIsEmpty(self.seq2)
+
+    def test_assert_is_not_empty(self):
+        """Test assertIsNotEmpty method."""
+        self.assertIsNotEmpty(self.seq1)
+        self.assertIsNotEmpty(self.seq2)
+
+    @unittest.expectedFailure
+    def test_assert_is_not_empty_fail(self):
+        """Test assertIsNotEmpty method."""
+        self.assertIsNotEmpty([])
+        self.assertIsNotEmpty('')
+
+    def test_assert_length(self):
+        """Test assertIsNotEmpty method."""
+        self.assertLength([], 0)
+        self.assertLength(self.seq1, 3)
+        self.assertLength(self.seq1, self.seq2)
+
+    @unittest.expectedFailure
+    def test_assert_length_fail(self):
+        """Test assertIsNotEmpty method."""
+        self.assertLength([], 1)
+        self.assertLength(self.seq1, 0)
+        self.assertLength(None, self.seq)
 
 
-if __name__ == "__main__":
-    try:
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

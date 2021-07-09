@@ -1,12 +1,13 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 """
-This script will display the list of pages transcluding a given list of templates.
+Display the list of pages transcluding a given list of templates.
 
 It can also be used to simply count the number of pages (rather than
 listing each individually).
 
-Syntax: python templatecount.py command [arguments]
+Syntax:
+
+    python pwb.py templatecount options templates
 
 Command line options:
 
@@ -16,34 +17,31 @@ Command line options:
 -list         Gives the list of all of the pages transcluding the templates
               (rather than just counting them).
 
--namespace:   Filters the search to a given namespace.  If this is specified
+-namespace:   Filters the search to a given namespace. If this is specified
               multiple times it will search all given namespaces
 
-Examples:
+Examples
+--------
 
 Counts how many times {{ref}} and {{note}} are transcluded in articles:
 
-    templatecount.py -count -namespace:0 ref note
+    python pwb.py templatecount -count -namespace:0 ref note
 
 Lists all the category pages that transclude {{cfd}} and {{cfdu}}:
 
-    templatecount.py -list -namespace:14 cfd cfdu
+    python pwb.py templatecount -list -namespace:14 cfd cfdu
 
 """
 #
-# (C) Pywikibot team, 2006-2014
-# (C) xqt, 2009-2014
+# (C) Pywikibot team, 2006-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-
 import datetime
-import pywikibot
+from typing import Generator
 
-templates = ['ref', 'note', 'ref label', 'note label', 'reflist']
+import pywikibot
+from pywikibot.backports import Dict, List, Tuple
 
 
 class TemplateCountRobot:
@@ -51,74 +49,108 @@ class TemplateCountRobot:
     """Template count bot."""
 
     @classmethod
-    def countTemplates(cls, templates, namespaces):
-        templateDict = cls.template_dict(templates, namespaces)
-        pywikibot.output(u'\nNumber of transclusions per template',
-                         toStdout=True)
-        pywikibot.output(u'-' * 36, toStdout=True)
+    def countTemplates(cls, templates, namespaces) -> None:
+        """
+        Display number of transclusions for a list of templates.
+
+        Displays the number of transcluded page in the given 'namespaces' for
+        each template given by 'templates' list.
+
+        :param templates: list of template names
+        :type templates: list
+        :param namespaces: list of namespace numbers
+        :type namespaces: list
+        """
+        formatstr = '{0:<10}: {1:>5}'
+        template_dict = cls.template_dict(templates, namespaces)
+        pywikibot.stdout('\nNumber of transclusions per template')
+        pywikibot.stdout('-' * 36)
         total = 0
-        for key in templateDict:
-            count = len(templateDict[key])
-            pywikibot.output(u'%-10s: %5d' % (key, count),
-                             toStdout=True)
+        for key in template_dict:
+            count = len(template_dict[key])
+            pywikibot.stdout(formatstr.format(key, count))
             total += count
-        pywikibot.output(u'TOTAL     : %5d' % total, toStdout=True)
-        pywikibot.output(u'Report generated on %s'
-                         % datetime.datetime.utcnow().isoformat(),
-                         toStdout=True)
+        pywikibot.stdout(formatstr.format('TOTAL', total))
+        pywikibot.stdout('Report generated on {}'
+                         .format(datetime.datetime.utcnow().isoformat()))
 
     @classmethod
-    def listTemplates(cls, templates, namespaces):
-        templateDict = cls.template_dict(templates, namespaces)
-        pywikibot.output(u'\nList of pages transcluding templates:',
-                         toStdout=True)
+    def listTemplates(cls, templates, namespaces) -> None:
+        """
+        Display transcluded pages for a list of templates.
+
+        Displays each transcluded page in the given 'namespaces' for
+        each template given by 'templates' list.
+
+        :param templates: list of template names
+        :type templates: list
+        :param namespaces: list of namespace numbers
+        :type namespaces: list
+        """
+        template_dict = cls.template_dict(templates, namespaces)
+        pywikibot.stdout('\nList of pages transcluding templates:')
         for key in templates:
-            pywikibot.output(u'* %s' % key)
-        pywikibot.output(u'-' * 36, toStdout=True)
+            pywikibot.output('* ' + key)
+        pywikibot.stdout('-' * 36)
         total = 0
-        for key in templateDict:
-            for page in templateDict[key]:
-                pywikibot.output(page.title(), toStdout=True)
+        for key in template_dict:
+            for page in template_dict[key]:
+                pywikibot.stdout(page.title())
                 total += 1
-        pywikibot.output(u'Total page count: %d' % total)
-        pywikibot.output(u'Report generated on %s'
-                         % datetime.datetime.utcnow().isoformat(),
-                         toStdout=True)
+        pywikibot.output('Total page count: {}'.format(total))
+        pywikibot.stdout('Report generated on {}'
+                         .format(datetime.datetime.utcnow().isoformat()))
 
     @classmethod
-    def template_dict(cls, templates, namespaces):
-        gen = cls.template_dict_generator(templates, namespaces)
-        templateDict = {}
-        for template, transcludingArray in gen:
-            templateDict[template] = transcludingArray
-        return templateDict
+    def template_dict(cls, templates, namespaces) -> Dict[
+            str, List[pywikibot.Page]]:
+        """
+        Create a dict of templates and its transcluded pages.
+
+        The names of the templates are the keys, and lists of pages
+        transcluding templates in the given namespaces are the values.
+
+        :param templates: list of template names
+        :type templates: list
+        :param namespaces: list of namespace numbers
+        :type namespaces: list
+        """
+        return dict(cls.template_dict_generator(templates, namespaces))
 
     @staticmethod
-    def template_dict_generator(templates, namespaces):
+    def template_dict_generator(templates, namespaces) -> Generator[
+            Tuple[str, List[pywikibot.Page]], None, None]:
+        """
+        Yield transclusions of each template in 'templates'.
+
+        For each template in 'templates', yield a tuple
+        (template, transclusions), where 'transclusions' is a list of all pages
+        in 'namespaces' where the template has been transcluded.
+
+        :param templates: list of template names
+        :type templates: list
+        :param namespaces: list of namespace numbers
+        :type namespaces: list
+        """
         mysite = pywikibot.Site()
-        # The names of the templates are the keys, and lists of pages
-        # transcluding templates are the values.
-        mytpl = mysite.ns_index(mysite.template_namespace())
+        mytpl = mysite.namespaces.TEMPLATE
         for template in templates:
-            transcludingArray = []
             gen = pywikibot.Page(mysite, template, ns=mytpl).getReferences(
-                namespaces=namespaces, onlyTemplateInclusion=True)
-            for page in gen:
-                transcludingArray.append(page)
-            yield template, transcludingArray
+                namespaces=namespaces, only_template_inclusion=True)
+            yield template, list(gen)
 
 
-def main(*args):
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
     operation = None
-    argsList = []
+    args_list = []
     namespaces = []
 
     for arg in pywikibot.handle_args(args):
@@ -130,32 +162,33 @@ def main(*args):
             except ValueError:
                 namespaces.append(arg[len('-namespace:'):])
         else:
-            argsList.append(arg)
+            args_list.append(arg)
 
     if not operation:
-        pywikibot.showHelp('templatecount')
+        pywikibot.bot.suggest_help(missing_parameters=['operation'])
         return
 
     robot = TemplateCountRobot()
-    if not argsList:
-        argsList = templates
+    if not args_list:
+        args_list = ['ref', 'note', 'ref label', 'note label', 'reflist']
 
-    if 'reflist' in argsList:
+    if 'reflist' in args_list:
         pywikibot.output(
-            u'NOTE: it will take a long time to count "reflist".')
+            'NOTE: it will take a long time to count "reflist".')
         choice = pywikibot.input_choice(
-            u'Proceed anyway?',
+            'Proceed anyway?',
             [('yes', 'y'), ('no', 'n'), ('skip', 's')], 'y',
             automatic_quit=False)
         if choice == 's':
-            argsList.remove('reflist')
+            args_list.remove('reflist')
         elif choice == 'n':
             return
 
-    if operation == "count":
-        robot.countTemplates(argsList, namespaces)
-    elif operation == "list":
-        robot.listTemplates(argsList, namespaces)
+    if operation == 'count':
+        robot.countTemplates(args_list, namespaces)
+    elif operation == 'list':
+        robot.listTemplates(args_list, namespaces)
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()

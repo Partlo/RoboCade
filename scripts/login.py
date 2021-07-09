@@ -1,39 +1,31 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 """
 Script to log the bot in to a wiki account.
 
 Suggestion is to make a special account to use for bot use only. Make
 sure this bot account is well known on your home wiki before using.
 
-Parameters:
+The following parameters are supported:
 
-   -family:FF
-   -lang:LL     Log in to the LL language of the FF family.
-                Example: -family:wiktionary -lang:fr will log you in at
+   -family:FF   Log in to the LL language of the FF family.
+   -lang:LL     Example: -family:wiktionary -lang:fr will log you in at
                 fr.wiktionary.org.
+
+   -site:FF:LL  Log in to the LL language of the FF family
 
    -all         Try to log in on all sites where a username is defined in
                 user-config.py.
 
-   -logout      Log out of the curren site. Combine with -all to log out of
+   -logout      Log out of the current site. Combine with -all to log out of
                 all sites, or with -family and -lang to log out of a specific
                 site.
 
-   -force       Ignores if the user is already logged in, and tries to log in.
+   -oauth       Generate OAuth authentication information.
+                NOTE: Need to copy OAuth tokens to your user-config.py
+                manually. -logout is not compatible with -oauth.
 
-   -pass        Useful in combination with -all when you have accounts for
-                several sites and use the same password for all of them.
-                Asks you for the password, then logs in on all given sites.
-
-   -pass:XXXX   Uses XXXX as password. Be careful if you use this
-                parameter because your password will be shown on your
-                screen, and will probably be saved in your command line
-                history. This is NOT RECOMMENDED for use on computers
-                where others have either physical or remote access.
-                Use -pass instead.
-
-   -sysop       Log in with your sysop account.
+   -autocreate  Auto-create an account using unified login when necessary.
+                Note: the global account must exist already before using this.
 
 If not given as parameter, the script will ask for your username and
 password (password entry will be hidden), log in to your home wiki using
@@ -47,83 +39,113 @@ To log out, throw away the *.lwp file that is created in the data
 subdirectory.
 """
 #
-# (C) Rob W.W. Hooft, 2003
-# (C) Pywikibot team, 2003-2014
+# (C) Pywikibot team, 2003-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
 import pywikibot
-from os.path import join
+import pywikibot.bot
 from pywikibot import config
+from pywikibot.backports import Tuple
 from pywikibot.exceptions import SiteDefinitionError
+from pywikibot.login import OauthLoginManager
 
 
-def main(*args):
+def _get_consumer_token(site) -> Tuple[str, str]:
+    key_msg = 'OAuth consumer key on {}:{}'.format(site.code, site.family)
+    key = pywikibot.input(key_msg)
+    secret_msg = 'OAuth consumer secret for consumer {}'.format(key)
+    secret = pywikibot.input(secret_msg, password=True)
+    return key, secret
+
+
+def _oauth_login(site) -> None:
+    consumer_key, consumer_secret = _get_consumer_token(site)
+    login_manager = OauthLoginManager(consumer_secret, site, consumer_key)
+    login_manager.login()
+    identity = login_manager.identity
+    if identity is None:
+        pywikibot.error('Invalid OAuth info for {site}.'.format(site=site))
+    elif site.username() != identity['username']:
+        pywikibot.error(
+            'Logged in on {site} via OAuth as {wrong}, but expect as {right}'
+            .format(site=site,
+                    wrong=identity['username'], right=site.username()))
+    else:
+        oauth_token = login_manager.consumer_token + login_manager.access_token
+        pywikibot.output('Logged in on {site} as {username}'
+                         'via OAuth consumer {consumer}\n'
+                         'NOTE: To use OAuth, you need to copy the '
+                         'following line to your user-config.py:\n'
+                         'authenticate[{hostname!r}] = {oauth_token}'
+                         .format(site=site,
+                                 username=site.username(),
+                                 consumer=consumer_key,
+                                 hostname=site.hostname(),
+                                 oauth_token=oauth_token))
+
+
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
-    password = None
-    sysop = False
     logall = False
     logout = False
+    oauth = False
+    autocreate = False
+    unknown_args = []
     for arg in pywikibot.handle_args(args):
-        if arg.startswith("-pass"):
-            if len(arg) == 5:
-                password = pywikibot.input(u'Password for all accounts (no characters will be shown):',
-                                           password=True)
-            else:
-                password = arg[6:]
-        elif arg == "-sysop":
-            sysop = True
-        elif arg == "-all":
+        if arg == '-all':
             logall = True
-        elif arg == "-force":
-            pywikibot.output(u"To force a re-login, please delete the revelant "
-                             u"lines from '%s' (or the entire file) and try again." %
-                             join(config.base_dir, 'pywikibot.lwp'))
-        elif arg == "-logout":
+        elif arg == '-logout':
             logout = True
+        elif arg == '-oauth':
+            oauth = True
+        elif arg == '-autocreate':
+            autocreate = True
         else:
-            pywikibot.showHelp('login')
-            return
+            unknown_args += [arg]
+
+    if pywikibot.bot.suggest_help(unknown_parameters=unknown_args):
+        return
+
     if logall:
-        if sysop:
-            namedict = config.sysopnames
-        else:
-            namedict = config.usernames
+        namedict = config.usernames
     else:
         site = pywikibot.Site()
         namedict = {site.family.name: {site.code: None}}
-    for familyName in namedict:
-        for lang in namedict[familyName]:
+    for family_name in namedict:
+        for lang in namedict[family_name]:
             try:
-                site = pywikibot.Site(code=lang, fam=familyName)
-                if logout:
-                    site.logout()
-                else:
-                    site.login(sysop)
-                user = site.user()
-                if user:
-                    pywikibot.output(u"Logged in on %(site)s as %(user)s." % locals())
-                else:
-                    if logout:
-                        pywikibot.output(u"Logged out of %(site)s." % locals())
-                    else:
-                        pywikibot.output(u"Not logged in on %(site)s." % locals())
+                site = pywikibot.Site(code=lang, fam=family_name)
             except SiteDefinitionError:
-                pywikibot.output(u'%s.%s is not a valid site, please remove it'
-                                 u' from your config' % (lang, familyName))
+                pywikibot.output('{}:{} is not a valid site, '
+                                 'please remove it from your user-config'
+                                 .format(family_name, lang))
+                continue
+
+            if oauth:
+                _oauth_login(site)
+                continue
+
+            if logout:
+                site.logout()
+            else:
+                site.login(autocreate=autocreate)
+
+            user = site.user()
+            if user:
+                pywikibot.output('Logged in on {} as {}.'.format(site, user))
+            elif logout:
+                pywikibot.output('Logged out of {}.'.format(site))
+            else:
+                pywikibot.output('Not logged in on {}.'.format(site))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

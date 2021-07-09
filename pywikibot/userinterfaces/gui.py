@@ -1,37 +1,38 @@
-# -*- coding: utf-8  -*-
 """
-A window with a unicode textfield where the user can edit.
+A window with a textfield where the user can edit.
 
 Useful for editing the contents of an article.
-"""
-from __future__ import unicode_literals
 
+*New in version 6.1:* Python 3.6 or highter is required.
+"""
 #
-# (C) Rob W.W. Hooft, 2003
-# (C) Daniel Herding, 2004
-#     Wikiwichtel
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2003-2021
 #
 # Distributed under the terms of the MIT license.
 #
-__version__ = '$Id$'
-#
-
-import sys
-if sys.version_info[0] > 2:
-    import tkinter as Tkinter
-    from tkinter.scrolledtext import ScrolledText
-    from tkinter import simpledialog as tkSimpleDialog
-else:
-    import Tkinter
-    from ScrolledText import ScrolledText
-    import tkSimpleDialog
-
-from idlelib import SearchDialog, ReplaceDialog, configDialog
-from idlelib.configHandler import idleConf
-from idlelib.MultiCall import MultiCallCreator
+import tkinter
+from tkinter import simpledialog as tkSimpleDialog
+from tkinter.scrolledtext import ScrolledText
+from typing import Optional
 
 import pywikibot
+from pywikibot import __url__
+from pywikibot.backports import Tuple
+from pywikibot.tools import PYTHON_VERSION
+
+
+# T164163: Fix idlelib import in Python 3.6
+if PYTHON_VERSION >= (3, 6):
+    from idlelib import replace as ReplaceDialog
+    from idlelib import search as SearchDialog
+    from idlelib.config import idleConf
+    from idlelib.configdialog import ConfigDialog
+    from idlelib.multicall import MultiCallCreator
+else:
+    from idlelib import ReplaceDialog, SearchDialog
+    from idlelib.configDialog import ConfigDialog
+    from idlelib.configHandler import idleConf
+    from idlelib.MultiCall import MultiCallCreator
 
 
 class TextEditor(ScrolledText):
@@ -44,51 +45,76 @@ class TextEditor(ScrolledText):
     """
 
     def __init__(self, master=None, **kwargs):
-        # get default settings from user's IDLE configuration
-        currentTheme = idleConf.CurrentTheme()
-        textcf = dict(padx=5, wrap='word', undo='True',
-                      foreground=idleConf.GetHighlight(currentTheme,
-                                                       'normal', fgBg='fg'),
-                      background=idleConf.GetHighlight(currentTheme,
-                                                       'normal', fgBg='bg'),
-                      highlightcolor=idleConf.GetHighlight(currentTheme,
-                                                           'hilite', fgBg='fg'),
-                      highlightbackground=idleConf.GetHighlight(currentTheme,
-                                                                'hilite',
-                                                                fgBg='bg'),
-                      insertbackground=idleConf.GetHighlight(currentTheme,
-                                                             'cursor',
-                                                             fgBg='fg'),
-                      width=idleConf.GetOption('main', 'EditorWindow', 'width'),
-                      height=idleConf.GetOption('main', 'EditorWindow',
-                                                'height')
-                      )
-        fontWeight = 'normal'
-        if idleConf.GetOption('main', 'EditorWindow', 'font-bold', type='bool'):
-            fontWeight = 'bold'
-        textcf['font'] = (idleConf.GetOption('main', 'EditorWindow', 'font'),
-                          idleConf.GetOption('main', 'EditorWindow',
-                                             'font-size'),
-                          fontWeight)
+        """
+        Initializer.
+
+        Get default settings from user's IDLE configuration.
+        """
+        textcf = self._initialize_config(idleConf.CurrentTheme())
+
+        if idleConf.GetOption('main', 'EditorWindow', 'font-bold',
+                              type='bool'):
+            font_weight = 'bold'
+        else:
+            font_weight = 'normal'
+        textcf['font'] = (
+            idleConf.GetOption('main', 'EditorWindow', 'font'),
+            idleConf.GetOption('main', 'EditorWindow', 'font-size'),
+            font_weight)
+
         # override defaults with any user-specified settings
         textcf.update(kwargs)
-        ScrolledText.__init__(self, master, **textcf)
+        super().__init__(master, **textcf)
+
+    def _initialize_config(self, Theme):
+        """Fix idleConf.GetHighlight method for different Python releases."""
+        config = {
+            'padx': 5,
+            'wrap': 'word',
+            'undo': 'True',
+            'width': idleConf.GetOption('main', 'EditorWindow', 'width'),
+            'height': idleConf.GetOption('main', 'EditorWindow', 'height'),
+        }
+        if PYTHON_VERSION >= (3, 7, 4):  # T241216
+            config['foreground'] = idleConf.GetHighlight(
+                Theme, 'normal')['foreground']
+            config['background'] = idleConf.GetHighlight(
+                Theme, 'normal')['background']
+            config['highlightcolor'] = idleConf.GetHighlight(
+                Theme, 'hilite')['foreground']
+            config['highlightbackground'] = idleConf.GetHighlight(
+                Theme, 'hilite')['background']
+            config['insertbackground'] = idleConf.GetHighlight(
+                Theme, 'cursor')['foreground']
+        else:
+            config['foreground'] = idleConf.GetHighlight(
+                Theme, 'normal', fgBg='fg')
+            config['background'] = idleConf.GetHighlight(
+                Theme, 'normal', fgBg='bg')
+            config['highlightcolor'] = idleConf.GetHighlight(
+                Theme, 'hilite', fgBg='fg')
+            config['highlightbackground'] = idleConf.GetHighlight(
+                Theme, 'hilite', fgBg='bg')
+            config['insertbackground'] = idleConf.GetHighlight(
+                Theme, 'cursor', fgBg='fg')
+        return config
 
     def add_bindings(self):
+        """Assign key and events bindings to methods."""
         # due to IDLE dependencies, this can't be called from __init__
         # add key and event bindings
-        self.bind("<<cut>>", self.cut)
-        self.bind("<<copy>>", self.copy)
-        self.bind("<<paste>>", self.paste)
-        self.bind("<<select-all>>", self.select_all)
-        self.bind("<<remove-selection>>", self.remove_selection)
-        self.bind("<<find>>", self.find_event)
-        self.bind("<<find-again>>", self.find_again_event)
-        self.bind("<<find-selection>>", self.find_selection_event)
-        self.bind("<<replace>>", self.replace_event)
-        self.bind("<<goto-line>>", self.goto_line_event)
-        self.bind("<<del-word-left>>", self.del_word_left)
-        self.bind("<<del-word-right>>", self.del_word_right)
+        self.bind('<<cut>>', self.cut)
+        self.bind('<<copy>>', self.copy)
+        self.bind('<<paste>>', self.paste)
+        self.bind('<<select-all>>', self.select_all)
+        self.bind('<<remove-selection>>', self.remove_selection)
+        self.bind('<<find>>', self.find_event)
+        self.bind('<<find-again>>', self.find_again_event)
+        self.bind('<<find-selection>>', self.find_selection_event)
+        self.bind('<<replace>>', self.replace_event)
+        self.bind('<<goto-line>>', self.goto_line_event)
+        self.bind('<<del-word-left>>', self.del_word_left)
+        self.bind('<<del-word-right>>', self.del_word_right)
         keydefs = {'<<copy>>': ['<Control-Key-c>', '<Control-Key-C>'],
                    '<<cut>>': ['<Control-Key-x>', '<Control-Key-X>'],
                    '<<del-word-left>>': ['<Control-Key-BackSpace>'],
@@ -111,58 +137,69 @@ class TextEditor(ScrolledText):
                 self.event_add(event, *keylist)
 
     def cut(self, event):
-        if self.tag_ranges("sel"):
-            self.event_generate("<<Cut>>")
-        return "break"
+        """Perform cut operation."""
+        if self.tag_ranges('sel'):
+            self.event_generate('<<Cut>>')
+        return 'break'
 
     def copy(self, event):
-        if self.tag_ranges("sel"):
-            self.event_generate("<<Copy>>")
-        return "break"
+        """Perform copy operation."""
+        if self.tag_ranges('sel'):
+            self.event_generate('<<Copy>>')
+        return 'break'
 
     def paste(self, event):
-        self.event_generate("<<Paste>>")
-        return "break"
+        """Perform paste operation."""
+        self.event_generate('<<Paste>>')
+        return 'break'
 
     def select_all(self, event=None):
-        self.tag_add("sel", "1.0", "end-1c")
-        self.mark_set("insert", "1.0")
-        self.see("insert")
-        return "break"
+        """Perform select all operation."""
+        self.tag_add('sel', '1.0', 'end-1c')
+        self.mark_set('insert', '1.0')
+        self.see('insert')
+        return 'break'
 
     def remove_selection(self, event=None):
-        self.tag_remove("sel", "1.0", "end")
-        self.see("insert")
+        """Perform remove operation."""
+        self.tag_remove('sel', '1.0', 'end')
+        self.see('insert')
 
     def del_word_left(self, event):
+        """Perform delete word (left) operation."""
         self.event_generate('<Meta-Delete>')
-        return "break"
+        return 'break'
 
     def del_word_right(self, event=None):
+        """Perform delete word (right) operation."""
         self.event_generate('<Meta-d>')
-        return "break"
+        return 'break'
 
     def find_event(self, event=None):
-        if not self.tag_ranges("sel"):
-            found = self.tag_ranges("found")
+        """Perform find operation."""
+        if not self.tag_ranges('sel'):
+            found = self.tag_ranges('found')
             if found:
-                self.tag_add("sel", found[0], found[1])
+                self.tag_add('sel', found[0], found[1])
             else:
-                self.tag_add("sel", "1.0", "1.0+1c")
+                self.tag_add('sel', '1.0', '1.0+1c')
         SearchDialog.find(self)
-        return "break"
+        return 'break'
 
     def find_again_event(self, event=None):
+        """Perform find again operation."""
         SearchDialog.find_again(self)
-        return "break"
+        return 'break'
 
     def find_selection_event(self, event=None):
+        """Perform find selection operation."""
         SearchDialog.find_selection(self)
-        return "break"
+        return 'break'
 
     def replace_event(self, event=None):
+        """Perform replace operation."""
         ReplaceDialog.replace(self)
-        return "break"
+        return 'break'
 
     def find_all(self, s):
         """
@@ -174,16 +211,15 @@ class TextEditor(ScrolledText):
         document to start searching from that point.)
 
         """
-        if hasattr(self, "_highlight") and self._highlight == s:
+        if hasattr(self, '_highlight') and self._highlight == s:
             try:
-                if self.get(Tkinter.SEL_FIRST, Tkinter.SEL_LAST) == s:
+                if self.get(tkinter.SEL_FIRST, tkinter.SEL_LAST) == s:
                     return self.find_selection_event(None)
-                else:
-                    # user must have changed the selection
-                    found = self.tag_nextrange('found', Tkinter.SEL_LAST)
-            except Tkinter.TclError:
+                # user must have changed the selection
+                found = self.tag_nextrange('found', tkinter.SEL_LAST)
+            except tkinter.TclError:
                 # user must have unset the selection
-                found = self.tag_nextrange('found', Tkinter.INSERT)
+                found = self.tag_nextrange('found', tkinter.INSERT)
             if not found:
                 # at last occurrence, scroll back to the top
                 found = self.tag_nextrange('found', 1.0)
@@ -193,18 +229,18 @@ class TextEditor(ScrolledText):
             # find all occurrences of string s;
             # adapted from O'Reilly's Python in a Nutshell
             # remove previous uses of tag 'found', if any
-            self.tag_remove('found', '1.0', Tkinter.END)
+            self.tag_remove('found', '1.0', tkinter.END)
             if s:
                 self._highlight = s
                 # start from the beginning (and when we come to the end, stop)
                 idx = '1.0'
                 while True:
                     # find next occurrence, exit loop if no more
-                    idx = self.search(s, idx, nocase=1, stopindex=Tkinter.END)
+                    idx = self.search(s, idx, nocase=1, stopindex=tkinter.END)
                     if not idx:
                         break
                     # index right after the end of the occurrence
-                    lastidx = '%s+%dc' % (idx, len(s))
+                    lastidx = '{}+{}c'.format(idx, len(s))
                     # tag the whole occurrence (start included, stop excluded)
                     self.tag_add('found', idx, lastidx)
                     # prepare to search for next occurrence
@@ -214,186 +250,190 @@ class TextEditor(ScrolledText):
                 found = self.tag_nextrange('found', 1.0)
                 if found:
                     self.do_highlight(found[0], found[1])
+        return None
 
     def do_highlight(self, start, end):
         """Select and show the text from index start to index end."""
         self.see(start)
-        self.tag_remove(Tkinter.SEL, '1.0', Tkinter.END)
-        self.tag_add(Tkinter.SEL, start, end)
+        self.tag_remove(tkinter.SEL, '1.0', tkinter.END)
+        self.tag_add(tkinter.SEL, start, end)
         self.focus_set()
 
     def goto_line_event(self, event):
-        lineno = tkSimpleDialog.askinteger("Goto", "Go to line number:",
+        """Perform goto line operation."""
+        lineno = tkSimpleDialog.askinteger('Goto', 'Go to line number:',
                                            parent=self)
         if lineno is None:
-            return "break"
+            return 'break'
         if lineno <= 0:
             self.bell()
-            return "break"
-        self.mark_set("insert", "%d.0" % lineno)
-        self.see("insert")
+            return 'break'
+        self.mark_set('insert', '{}.0'.format(lineno))
+        self.see('insert')
+        return None
 
 
-class EditBoxWindow(Tkinter.Frame):
+class EditBoxWindow(tkinter.Frame):
 
     """Edit box window."""
 
     def __init__(self, parent=None, **kwargs):
+        """Initializer."""
         if parent is None:
             # create a new window
-            parent = Tkinter.Tk()
+            parent = tkinter.Tk()
         self.parent = parent
-        Tkinter.Frame.__init__(self, parent)
+        super().__init__(parent)
         self.editbox = MultiCallCreator(TextEditor)(self, **kwargs)
-        self.editbox.pack(side=Tkinter.TOP)
+        self.editbox.pack(side=tkinter.TOP)
         self.editbox.add_bindings()
-        self.bind("<<open-config-dialog>>", self.config_dialog)
+        self.bind('<<open-config-dialog>>', self.config_dialog)
 
-        bottom = Tkinter.Frame(parent)
-        # lower left subframe which will contain a textfield and a Search button
-        bottom_left_frame = Tkinter.Frame(bottom)
-        self.textfield = Tkinter.Entry(bottom_left_frame)
-        self.textfield.pack(side=Tkinter.LEFT, fill=Tkinter.X, expand=1)
+        bottom = tkinter.Frame(parent)
+        # lower left subframe with a textfield and a Search button
+        bottom_left_frame = tkinter.Frame(bottom)
+        self.textfield = tkinter.Entry(bottom_left_frame)
+        self.textfield.pack(side=tkinter.LEFT, fill=tkinter.X, expand=1)
 
-        buttonSearch = Tkinter.Button(bottom_left_frame, text='Find next',
+        buttonSearch = tkinter.Button(bottom_left_frame, text='Find next',
                                       command=self.find)
-        buttonSearch.pack(side=Tkinter.RIGHT)
-        bottom_left_frame.pack(side=Tkinter.LEFT, expand=1)
+        buttonSearch.pack(side=tkinter.RIGHT)
+        bottom_left_frame.pack(side=tkinter.LEFT, expand=1)
 
         # lower right subframe which will contain OK and Cancel buttons
-        bottom_right_frame = Tkinter.Frame(bottom)
+        bottom_right_frame = tkinter.Frame(bottom)
 
-        buttonOK = Tkinter.Button(bottom_right_frame, text='OK',
+        buttonOK = tkinter.Button(bottom_right_frame, text='OK',
                                   command=self.pressedOK)
-        buttonCancel = Tkinter.Button(bottom_right_frame, text='Cancel',
+        buttonCancel = tkinter.Button(bottom_right_frame, text='Cancel',
                                       command=parent.destroy)
-        buttonOK.pack(side=Tkinter.LEFT, fill=Tkinter.X)
-        buttonCancel.pack(side=Tkinter.RIGHT, fill=Tkinter.X)
-        bottom_right_frame.pack(side=Tkinter.RIGHT, expand=1)
+        buttonOK.pack(side=tkinter.LEFT, fill=tkinter.X)
+        buttonCancel.pack(side=tkinter.RIGHT, fill=tkinter.X)
+        bottom_right_frame.pack(side=tkinter.RIGHT, expand=1)
 
-        bottom.pack(side=Tkinter.TOP)
+        bottom.pack(side=tkinter.TOP)
 
         # create a toplevel menu
-        menubar = Tkinter.Menu(self.parent)
+        menubar = tkinter.Menu(self.parent)
 
-        findmenu = Tkinter.Menu(menubar)
-        findmenu.add_command(label="Find",
+        findmenu = tkinter.Menu(menubar)
+        findmenu.add_command(label='Find',
                              command=self.editbox.find_event,
-                             accelerator="Ctrl+F",
+                             accelerator='Ctrl+F',
                              underline=0)
-        findmenu.add_command(label="Find again",
+        findmenu.add_command(label='Find again',
                              command=self.editbox.find_again_event,
-                             accelerator="Ctrl+G",
+                             accelerator='Ctrl+G',
                              underline=6)
-        findmenu.add_command(label="Find all",
+        findmenu.add_command(label='Find all',
                              command=self.find_all,
                              underline=5)
-        findmenu.add_command(label="Find selection",
+        findmenu.add_command(label='Find selection',
                              command=self.editbox.find_selection_event,
-                             accelerator="Ctrl+F3",
+                             accelerator='Ctrl+F3',
                              underline=5)
-        findmenu.add_command(label="Replace",
+        findmenu.add_command(label='Replace',
                              command=self.editbox.replace_event,
-                             accelerator="Ctrl+H",
+                             accelerator='Ctrl+H',
                              underline=0)
-        menubar.add_cascade(label="Find", menu=findmenu, underline=0)
+        menubar.add_cascade(label='Find', menu=findmenu, underline=0)
 
-        editmenu = Tkinter.Menu(menubar)
-        editmenu.add_command(label="Cut",
+        editmenu = tkinter.Menu(menubar)
+        editmenu.add_command(label='Cut',
                              command=self.editbox.cut,
-                             accelerator="Ctrl+X",
+                             accelerator='Ctrl+X',
                              underline=2)
-        editmenu.add_command(label="Copy",
+        editmenu.add_command(label='Copy',
                              command=self.editbox.copy,
-                             accelerator="Ctrl+C",
+                             accelerator='Ctrl+C',
                              underline=0)
-        editmenu.add_command(label="Paste",
+        editmenu.add_command(label='Paste',
                              command=self.editbox.paste,
-                             accelerator="Ctrl+V",
+                             accelerator='Ctrl+V',
                              underline=0)
         editmenu.add_separator()
-        editmenu.add_command(label="Select all",
+        editmenu.add_command(label='Select all',
                              command=self.editbox.select_all,
-                             accelerator="Ctrl+A",
+                             accelerator='Ctrl+A',
                              underline=7)
-        editmenu.add_command(label="Clear selection",
+        editmenu.add_command(label='Clear selection',
                              command=self.editbox.remove_selection,
-                             accelerator="Esc")
-        menubar.add_cascade(label="Edit", menu=editmenu, underline=0)
+                             accelerator='Esc')
+        menubar.add_cascade(label='Edit', menu=editmenu, underline=0)
 
-        optmenu = Tkinter.Menu(menubar)
-        optmenu.add_command(label="Settings...",
+        optmenu = tkinter.Menu(menubar)
+        optmenu.add_command(label='Settings...',
                             command=self.config_dialog,
                             underline=0)
-        menubar.add_cascade(label="Options", menu=optmenu, underline=0)
+        menubar.add_cascade(label='Options', menu=optmenu, underline=0)
 
         # display the menu
         self.parent.config(menu=menubar)
         self.pack()
 
-    def edit(self, text, jumpIndex=None, highlight=None):
+    def edit(self, text: str, jumpIndex: Optional[int] = None,
+             highlight: Optional[str] = None):
         """
         Provide user with editor to modify text.
 
-        @param text: the text to be edited
-        @type text: unicode
-        @param jumpIndex: position at which to put the caret
-        @type jumpIndex: int
-        @param highlight: each occurrence of this substring will be highlighted
-        @type highlight: unicode
-        @return: the modified text, or None if the user didn't save the text
+        :param text: the text to be edited
+        :param jumpIndex: position at which to put the caret
+        :param highlight: each occurrence of this substring will be highlighted
+        :return: the modified text, or None if the user didn't save the text
             file in his text editor
-        @rtype: unicode or None
+        :rtype: str or None
         """
         self.text = None
         # put given text into our textarea
-        self.editbox.insert(Tkinter.END, text)
+        self.editbox.insert(tkinter.END, text)
         # wait for user to push a button which will destroy (close) the window
         # enable word wrap
-        self.editbox.tag_add('all', '1.0', Tkinter.END)
-        self.editbox.tag_config('all', wrap=Tkinter.WORD)
+        self.editbox.tag_add('all', '1.0', tkinter.END)
+        self.editbox.tag_config('all', wrap=tkinter.WORD)
         # start search if required
         if highlight:
             self.find_all(highlight)
         if jumpIndex:
-            print(jumpIndex)
             # lines are indexed starting at 1
             line = text[:jumpIndex].count('\n') + 1
             column = jumpIndex - (text[:jumpIndex].rfind('\n') + 1)
-            # don't know how to place the caret, but scrolling to the right line
-            # should already be helpful.
-            self.editbox.see('%d.%d' % (line, column))
+            # don't know how to place the caret, but scrolling to the right
+            # line should already be helpful.
+            self.editbox.see('{}.{}'.format(line, column))
         # wait for user to push a button which will destroy (close) the window
         self.parent.mainloop()
         return self.text
 
     def find_all(self, target):
-        self.textfield.insert(Tkinter.END, target)
+        """Perform find all operation."""
+        self.textfield.insert(tkinter.END, target)
         self.editbox.find_all(target)
 
     def find(self):
+        """Perform find operation."""
         # get text to search for
         s = self.textfield.get()
         if s:
             self.editbox.find_all(s)
 
     def config_dialog(self, event=None):
-        configDialog.ConfigDialog(self, 'Settings')
+        """Show config dialog."""
+        ConfigDialog(self, 'Settings')
 
     def pressedOK(self):
-        # called when user pushes the OK button.
-        # saves the buffer into a variable, and closes the window.
-        self.text = self.editbox.get('1.0', Tkinter.END)
-        # if the editbox contains ASCII characters only, get() will
-        # return string, otherwise unicode (very annoying). We only want
-        # it to return unicode, so we work around this.
-        if sys.version[0] == 2 and isinstance(self.text, str):
-            self.text = unicode(self.text)  # noqa
+        """
+        Perform OK operation.
+
+        Called when user pushes the OK button.
+        Saves the buffer into a variable, and closes the window.
+        """
+        self.text = self.editbox.get('1.0', tkinter.END)
         self.parent.destroy()
 
     def debug(self, event=None):
+        """Call quit() and return 'break'."""
         self.quit()
-        return "break"
+        return 'break'
 
 
 # the following class isn't used anywhere in the framework: ####
@@ -404,30 +444,36 @@ class ListBoxWindow:
     # called when user pushes the OK button.
     # closes the window.
     def pressedOK(self):
-        # ok closes listbox
+        """
+        Perform OK operation.
+
+        Closes listbox.
+        """
         self.parent.destroy()
 
     def __init__(self, parent=None):
+        """Initializer."""
         if parent is None:
             # create a new window
-            parent = Tkinter.Tk()
+            parent = tkinter.Tk()
         self.parent = parent
 
         # selectable: only one item
-        self.listbox = Tkinter.Listbox(parent, selectmode=Tkinter.SINGLE)
+        self.listbox = tkinter.Listbox(parent, selectmode=tkinter.SINGLE)
         # put list into main frame, using all available space
-        self.listbox.pack(anchor=Tkinter.CENTER, fill=Tkinter.BOTH)
+        self.listbox.pack(anchor=tkinter.CENTER, fill=tkinter.BOTH)
 
         # lower subframe which will contain one button
-        self.bottom_frame = Tkinter.Frame(parent)
-        self.bottom_frame.pack(side=Tkinter.BOTTOM)
+        self.bottom_frame = tkinter.Frame(parent)
+        self.bottom_frame.pack(side=tkinter.BOTTOM)
 
-        buttonOK = Tkinter.Button(self.bottom_frame, text='OK', command=self.pressedOK)
-        buttonOK.pack(side=Tkinter.LEFT, fill=Tkinter.X)
+        buttonOK = tkinter.Button(self.bottom_frame, text='OK',
+                                  command=self.pressedOK)
+        buttonOK.pack(side=tkinter.LEFT, fill=tkinter.X)
         # idea: set title to cur_disambiguation
 
     def list(self, list):
-        # put list of alternatives into listbox
+        """Put list of alternatives into listbox."""
         self.list = list
         # find required area
         laenge = len(list)
@@ -437,7 +483,7 @@ class ListBoxWindow:
             if len(list[i]) + len(str(i)) > maxbreite:
                 maxbreite = len(list[i]) + len(str(i))
             # show list as formerly in DOS-window
-            self.listbox.insert(Tkinter.END, str(i) + ' - ' + list[i])
+            self.listbox.insert(tkinter.END, str(i) + ' - ' + list[i])
         # set optimized height & width
         self.listbox.config(height=laenge, width=maxbreite + 2)
         # wait for user to push a button which will destroy (close) the window
@@ -449,11 +495,12 @@ class Tkdialog:
     """The dialog window for image info."""
 
     def __init__(self, photo_description, photo, filename):
-        """Constructor."""
-        self.root = Tkinter.Tk()
+        """Initializer."""
+        self.root = tkinter.Tk()
         # "%dx%d%+d%+d" % (width, height, xoffset, yoffset)
-        self.root.geometry("%ix%i+10-10" % (pywikibot.config.tkhorsize,
-                                            pywikibot.config.tkvertsize))
+        self.root.geometry('{}x{}+10-10'
+                           .format(int(pywikibot.config.tkhorsize),
+                                   int(pywikibot.config.tkvertsize)))
 
         self.root.title(filename)
         self.photo_description = photo_description
@@ -465,31 +512,32 @@ class Tkdialog:
         # --Init of the widgets
         # The image
         self.image = self.get_image(self.photo, 800, 600)
-        self.image_panel = Tkinter.Label(self.root, image=self.image)
+        self.image_panel = tkinter.Label(self.root, image=self.image)
 
         self.image_panel.image = self.image
 
         # The filename
-        self.filename_label = Tkinter.Label(self.root, text=u"Suggested filename")
-        self.filename_field = Tkinter.Entry(self.root, width=100)
-        self.filename_field.insert(Tkinter.END, filename)
+        self.filename_label = tkinter.Label(self.root,
+                                            text='Suggested filename')
+        self.filename_field = tkinter.Entry(self.root, width=100)
+        self.filename_field.insert(tkinter.END, filename)
 
         # The description
-        self.description_label = Tkinter.Label(self.root,
-                                               text=u"Suggested description")
-        self.description_scrollbar = Tkinter.Scrollbar(self.root,
-                                                       orient=Tkinter.VERTICAL)
-        self.description_field = Tkinter.Text(self.root)
-        self.description_field.insert(Tkinter.END, photo_description)
-        self.description_field.config(state=Tkinter.NORMAL, height=12, width=100,
-                                      padx=0, pady=0, wrap=Tkinter.WORD,
-                                      yscrollcommand=self.description_scrollbar.set)
+        self.description_label = tkinter.Label(self.root,
+                                               text='Suggested description')
+        self.description_scrollbar = tkinter.Scrollbar(self.root,
+                                                       orient=tkinter.VERTICAL)
+        self.description_field = tkinter.Text(self.root)
+        self.description_field.insert(tkinter.END, photo_description)
+        self.description_field.config(
+            state=tkinter.NORMAL, height=12, width=100, padx=0, pady=0,
+            wrap=tkinter.WORD, yscrollcommand=self.description_scrollbar.set)
         self.description_scrollbar.config(command=self.description_field.yview)
 
         # The buttons
-        self.ok_button = Tkinter.Button(self.root, text="OK",
+        self.ok_button = tkinter.Button(self.root, text='OK',
                                         command=self.ok_file)
-        self.skip_button = Tkinter.Button(self.root, text="Skip",
+        self.skip_button = tkinter.Button(self.root, text='Skip',
                                           command=self.skip_file)
 
         # --Start grid
@@ -512,13 +560,21 @@ class Tkdialog:
 
     def get_image(self, photo, width, height):
         """Take the BytesIO object and build an imageTK thumbnail."""
+        if PYTHON_VERSION < (3, 6):
+            # vulnerability found in Pillow<8.1.1
+            from sys import version
+            raise RuntimeError(
+                'This script requires Python 3.6+ for GUI support.\n'
+                '{version} is not supported. Please update your Python.'
+                .format(version=version.split(maxsplit=1)[0])
+            )
+
         try:
             from PIL import Image, ImageTk
         except ImportError:
             pywikibot.warning('This script requires ImageTk from the'
                               'Python Imaging Library (PIL).\n'
-                              'See: https://www.mediawiki.org/wiki/'
-                              'Manual:Pywikibot/flickrripper.py')
+                              'See: {}/flickrripper.py'.format(__url__))
             raise
 
         image = Image.open(photo)
@@ -529,7 +585,7 @@ class Tkdialog:
     def ok_file(self):
         """The user pressed the OK button."""
         self.filename = self.filename_field.get()
-        self.photo_description = self.description_field.get(0.0, Tkinter.END)
+        self.photo_description = self.description_field.get(0.0, tkinter.END)
         self.root.destroy()
 
     def skip_file(self):
@@ -537,11 +593,10 @@ class Tkdialog:
         self.skip = True
         self.root.destroy()
 
-    def show_dialog(self):
+    def show_dialog(self) -> Tuple[str, str, bool]:
         """Activate the dialog.
 
-        @return: new description, name, and if the image is skipped
-        @rtype: tuple of (unicode, unicode, bool)
+        :return: new description, name, and if the image is skipped
         """
         self.root.mainloop()
         return self.photo_description, self.filename, self.skip

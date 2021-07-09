@@ -1,97 +1,100 @@
-# -*- coding: utf-8  -*-
 """Module to determine the pywikibot version (tag, revision and date)."""
 #
-# (C) Merlijn 'valhallasw' van Deen, 2007-2014
-# (C) xqt, 2010-2015
-# (C) Pywikibot team, 2007-2015
+# (C) Pywikibot team, 2007-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
-import os
-import sys
-import time
 import datetime
+import json
+import os
+import pathlib
+import socket
 import subprocess
-import codecs
-
+import sys
+import sysconfig
+import time
+import xml.dom.minidom
+from contextlib import closing, suppress
+from importlib import import_module
+from io import BytesIO
+from typing import Optional
 from warnings import warn
 
-try:
-    from setuptools import svn_utils
-except ImportError:
-    try:
-        from setuptools_svn import svn_utils
-    except ImportError as e:
-        svn_utils = e
-
 import pywikibot
+from pywikibot import config
+from pywikibot.backports import cache
+from pywikibot.comms.http import fetch
+from pywikibot.exceptions import VersionParseError
+from pywikibot.tools import ModuleDeprecationWrapper, deprecated
 
-from pywikibot import config2 as config
-from pywikibot.tools import deprecated
 
-if sys.version_info[0] > 2:
-    basestring = (str, )
-
-cache = None
 _logger = 'version'
 
 
-class ParseError(Exception):
-
-    """Parsing went wrong."""
-
-
 def _get_program_dir():
-    _program_dir = os.path.normpath(os.path.split(os.path.dirname(__file__))[0])
+    _program_dir = os.path.normpath(
+        os.path.split(os.path.dirname(__file__))[0])
     return _program_dir
 
 
-def getversion(online=True):
+def get_toolforge_hostname() -> Optional[str]:
+    """Get hostname of the current Toolforge host.
+
+    *New in version 3.0.*
+
+    :return: The hostname of the currently running host,
+             if it is in Wikimedia Toolforge; otherwise return None.
+    """
+    if socket.getfqdn().endswith('.tools.eqiad.wmflabs'):
+        return socket.gethostname()
+    return None
+
+
+def getversion(online: bool = True) -> str:
     """Return a pywikibot version string.
 
-    @param online: (optional) Include information obtained online
+    :param online: Include information obtained online
     """
-    data = dict(getversiondict())  # copy dict to prevent changes in 'cache'
+    branches = {
+        'master': 'branches/master',
+        'stable': 'branches/stable',
+    }
+    data = getversiondict()
     data['cmp_ver'] = 'n/a'
+    local_hsh = data.get('hsh', '')
+    hsh = {}
 
     if online:
-        try:
-            hsh2 = getversion_onlinerepo()
-            hsh1 = data['hsh']
-            data['cmp_ver'] = 'OUTDATED' if hsh1 != hsh2 else 'ok'
-        except Exception:
-            pass
+        if not local_hsh:
+            data['cmp_ver'] = 'UNKNOWN'
+        else:
+            for branch, path in branches.items():
+                with suppress(Exception):
+                    hsh[getversion_onlinerepo(path)] = branch
+            if hsh:
+                data['cmp_ver'] = hsh.get(local_hsh, 'OUTDATED')
 
-    data['hsh'] = data['hsh'][:7]  # make short hash from full hash
-    return '%(tag)s (%(hsh)s, %(rev)s, %(date)s, %(cmp_ver)s)' % data
+    data['hsh'] = local_hsh[:7]  # make short hash from full hash
+    return '{tag} ({hsh}, {rev}, {date}, {cmp_ver})'.format_map(data)
 
 
+@cache
 def getversiondict():
     """Get version info for the package.
 
-    @return:
+    :return:
         - tag (name for the repository),
         - rev (current revision identifier),
         - date (date of current revision),
         - hash (git hash for the current revision)
-    @rtype: C{dict} of four C{str}
+    :rtype: ``dict`` of four ``str``
     """
-    global cache
-    if cache:
-        return cache
-
     _program_dir = _get_program_dir()
     exceptions = {}
 
     for vcs_func in (getversion_git,
-                     getversion_svn_setuptools,
-                     getversion_nightly,
                      getversion_svn,
+                     getversion_nightly,
                      getversion_package):
         try:
             (tag, rev, date, hsh) = vcs_func(_program_dir)
@@ -105,16 +108,16 @@ def getversiondict():
         # pywikibot was imported without using version control at all.
         tag, rev, date, hsh = (
             '', '-1 (unknown)', '0 (unknown)', '(unknown)')
+        warn('Unable to detect version; exceptions raised:\n{!r}'
+             .format(exceptions), UserWarning)
+        exceptions = None
 
-    # git and svn can silently fail, as it may be a nightly.
-    if getversion_package in exceptions:
-        warn('Unable to detect version; exceptions raised:\n%r'
-             % exceptions, UserWarning)
-    elif exceptions:
-        pywikibot.debug('version algorithm exceptions:\n%r'
-                        % exceptions, _logger)
+    # Git and SVN can silently fail, as it may be a nightly.
+    if exceptions:
+        pywikibot.debug('version algorithm exceptions:\n{!r}'
+                        .format(exceptions), _logger)
 
-    if isinstance(date, basestring):
+    if isinstance(date, str):
         datestring = date
     elif isinstance(date, time.struct_time):
         datestring = time.strftime('%Y/%m/%d, %H:%M:%S', date)
@@ -122,20 +125,18 @@ def getversiondict():
         warn('Unable to detect package date', UserWarning)
         datestring = '-2 (unknown)'
 
-    cache = dict(tag=tag, rev=rev, date=datestring, hsh=hsh)
-    return cache
+    return {'tag': tag, 'rev': rev, 'date': datestring, 'hsh': hsh}
 
 
-@deprecated('getversion_svn_setuptools')
-def svn_rev_info(path):
-    """Fetch information about the current revision of an Subversion checkout.
+def svn_rev_info(path):  # pragma: no cover
+    """Fetch information about the current revision of a Subversion checkout.
 
-    @param path: directory of the Subversion checkout
-    @return:
+    :param path: directory of the Subversion checkout
+    :return:
         - tag (name for the repository),
         - rev (current Subversion revision identifier),
         - date (date of current revision),
-    @rtype: C{tuple} of two C{str} and a C{time.struct_time}
+    :rtype: ``tuple`` of two ``str`` and a ``time.struct_time``
     """
     if not os.path.isdir(os.path.join(path, '.svn')):
         path = os.path.join(path, '..')
@@ -146,14 +147,14 @@ def svn_rev_info(path):
         with open(filename) as entries:
             version = entries.readline().strip()
             if version != '12':
-                for i in range(3):
+                for _ in range(3):
                     entries.readline()
                 tag = entries.readline().strip()
-                t = tag.split('://')
+                t = tag.split('://', 1)
                 t[1] = t[1].replace('svn.wikimedia.org/svnroot/pywikipedia/',
                                     '')
-                tag = '[%s] %s' % (t[0], t[1])
-                for i in range(4):
+                tag = '[{}] {}'.format(*t)
+                for _ in range(4):
                     entries.readline()
                 date = time.strptime(entries.readline()[:19],
                                      '%Y-%m-%dT%H:%M:%S')
@@ -163,121 +164,86 @@ def svn_rev_info(path):
     # We haven't found the information in entries file.
     # Use sqlite table for new entries format
     from sqlite3 import dbapi2 as sqlite
-    con = sqlite.connect(os.path.join(_program_dir, ".svn/wc.db"))
-    cur = con.cursor()
-    cur.execute("""select
+    with closing(
+            sqlite.connect(os.path.join(_program_dir, '.svn/wc.db'))) as con:
+        cur = con.cursor()
+        cur.execute("""select
 local_relpath, repos_path, revision, changed_date, checksum from nodes
 order by revision desc, changed_date desc""")
-    name, tag, rev, date, checksum = cur.fetchone()
-    cur.execute("select root from repository")
-    tag, = cur.fetchone()
-    con.close()
+        name, tag, rev, date, checksum = cur.fetchone()
+        cur.execute('select root from repository')
+        tag, = cur.fetchone()
+
     tag = os.path.split(tag)[1]
     date = time.gmtime(date / 1000000)
     return tag, rev, date
 
 
-def github_svn_rev2hash(tag, rev):
+def github_svn_rev2hash(tag: str, rev):  # pragma: no cover
     """Convert a Subversion revision to a Git hash using Github.
 
-    @param tag: name of the Subversion repo on Github
-    @param rev: Subversion revision identifier
-    @return: the git hash
-    @rtype: str
+    :param tag: name of the Subversion repo on Github
+    :param rev: Subversion revision identifier
+    :return: the git hash
     """
-    from io import StringIO
-    import xml.dom.minidom
-    from pywikibot.comms import http
-
-    uri = 'https://github.com/wikimedia/%s/!svn/vcc/default' % tag
-    request = http.fetch(uri=uri, method='PROPFIND',
-                         body="<?xml version='1.0' encoding='utf-8'?>"
-                              "<propfind xmlns=\"DAV:\"><allprop/></propfind>",
-                         headers={'label': str(rev),
-                                  'user-agent': 'SVN/1.7.5 {pwb}'})
-    data = request.content
-
-    dom = xml.dom.minidom.parse(StringIO(data))
-    hsh = dom.getElementsByTagName("C:git-commit")[0].firstChild.nodeValue
-    date = dom.getElementsByTagName("S:date")[0].firstChild.nodeValue
+    uri = 'https://github.com/wikimedia/{}/!svn/vcc/default'.format(tag)
+    request = fetch(uri, method='PROPFIND',
+                    data="<?xml version='1.0' encoding='utf-8'?>"
+                         '<propfind xmlns=\"DAV:\"><allprop/></propfind>',
+                    headers={'label': str(rev),
+                             'user-agent': 'SVN/1.7.5 {pwb}'})
+    dom = xml.dom.minidom.parse(BytesIO(request.content))
+    hsh = dom.getElementsByTagName('C:git-commit')[0].firstChild.nodeValue
+    date = dom.getElementsByTagName('S:date')[0].firstChild.nodeValue
     date = time.strptime(date[:19], '%Y-%m-%dT%H:%M:%S')
     return hsh, date
 
 
-def getversion_svn_setuptools(path=None):
-    """Get version info for a Subversion checkout using setuptools.
-
-    @param path: directory of the Subversion checkout
-    @return:
-        - tag (name for the repository),
-        - rev (current Subversion revision identifier),
-        - date (date of current revision),
-        - hash (git hash for the Subversion revision)
-    @rtype: C{tuple} of three C{str} and a C{time.struct_time}
-    """
-    if isinstance(svn_utils, Exception):
-        raise svn_utils
-    tag = 'pywikibot-core'
-    _program_dir = path or _get_program_dir()
-    svninfo = svn_utils.SvnInfo(_program_dir)
-    rev = svninfo.get_revision()
-    if not isinstance(rev, int):
-        raise TypeError('SvnInfo.get_revision() returned type %s' % type(rev))
-    if rev < 0:
-        raise ValueError('SvnInfo.get_revision() returned %d' % rev)
-    if rev == 0:
-        raise ParseError('SvnInfo: invalid workarea')
-    hsh, date = github_svn_rev2hash(tag, rev)
-    rev = 's%s' % rev
-    return (tag, rev, date, hsh)
-
-
-@deprecated('getversion_svn_setuptools')
-def getversion_svn(path=None):
+def getversion_svn(path=None):  # pragma: no cover
     """Get version info for a Subversion checkout.
 
-    @param path: directory of the Subversion checkout
-    @return:
+    :param path: directory of the Subversion checkout
+    :return:
         - tag (name for the repository),
         - rev (current Subversion revision identifier),
         - date (date of current revision),
         - hash (git hash for the Subversion revision)
-    @rtype: C{tuple} of three C{str} and a C{time.struct_time}
+    :rtype: ``tuple`` of three ``str`` and a ``time.struct_time``
     """
     _program_dir = path or _get_program_dir()
     tag, rev, date = svn_rev_info(_program_dir)
     hsh, date2 = github_svn_rev2hash(tag, rev)
     if date.tm_isdst >= 0 and date2.tm_isdst >= 0:
-        assert(date == date2)
+        assert date == date2, 'Date of version is not consistent'
     # date.tm_isdst is -1 means unknown state
     # compare its contents except daylight saving time status
     else:
-        for i in range(date.n_fields - 1):
-            assert(date[i] == date2[i])
+        for i in range(len(date) - 1):
+            assert date[i] == date2[i], 'Date of version is not consistent'
 
-    rev = 's%s' % rev
+    rev = 's{}'.format(rev)
     if (not date or not tag or not rev) and not path:
-        raise ParseError
+        raise VersionParseError
     return (tag, rev, date, hsh)
 
 
 def getversion_git(path=None):
     """Get version info for a Git clone.
 
-    @param path: directory of the Git checkout
-    @return:
+    :param path: directory of the Git checkout
+    :return:
         - tag (name for the repository),
         - rev (current revision identifier),
         - date (date of current revision),
         - hash (git hash for the current revision)
-    @rtype: C{tuple} of three C{str} and a C{time.struct_time}
+    :rtype: ``tuple`` of three ``str`` and a ``time.struct_time``
     """
     _program_dir = path or _get_program_dir()
     cmd = 'git'
     try:
         subprocess.Popen([cmd], stdout=subprocess.PIPE).communicate()
     except OSError:
-        # some windows git versions provide git.cmd instead of git.exe
+        # some Windows git versions provide git.cmd instead of git.exe
         cmd = 'git.cmd'
 
     with open(os.path.join(_program_dir, '.git/config'), 'r') as f:
@@ -293,39 +259,39 @@ def getversion_git(path=None):
         e = tag.find('\n', s)
         tag = tag[(s + 6):e]
         t = tag.strip().split('/')
-        tag = '[%s] %s' % (t[0][:-1], '-'.join(t[3:]))
-    with subprocess.Popen([cmd, '--no-pager',
+        tag = '[{}] {}'.format(t[0][:-1], '-'.join(t[3:]))
+    dp = subprocess.Popen([cmd, '--no-pager',
                            'log', '-1',
-                           '--pretty=format:"%ad|%an|%h|%H|%d"'
+                           '--pretty=format:"%ad|%an|%h|%H|%d"',
                            '--abbrev-commit',
                            '--date=iso'],
                           cwd=_program_dir,
-                          stdout=subprocess.PIPE).stdout as stdout:
-        info = stdout.read()
+                          stdout=subprocess.PIPE)
+    info, stderr = dp.communicate()
     info = info.decode(config.console_encoding).split('|')
     date = info[0][:-6]
     date = time.strptime(date.strip('"'), '%Y-%m-%d %H:%M:%S')
-    with subprocess.Popen([cmd, 'rev-list', 'HEAD'],
+    dp = subprocess.Popen([cmd, 'rev-list', 'HEAD'],
                           cwd=_program_dir,
-                          stdout=subprocess.PIPE).stdout as stdout:
-        rev = stdout.read()
-    rev = 'g%s' % len(rev.splitlines())
+                          stdout=subprocess.PIPE)
+    rev, stderr = dp.communicate()
+    rev = 'g{}'.format(len(rev.splitlines()))
     hsh = info[3]  # also stored in '.git/refs/heads/master'
     if (not date or not tag or not rev) and not path:
-        raise ParseError
+        raise VersionParseError
     return (tag, rev, date, hsh)
 
 
-def getversion_nightly(path=None):
+def getversion_nightly(path=None):  # pragma: no cover
     """Get version info for a nightly release.
 
-    @param path: directory of the uncompressed nightly.
-    @return:
+    :param path: directory of the uncompressed nightly.
+    :return:
         - tag (name for the repository),
         - rev (current revision identifier),
         - date (date of current revision),
         - hash (git hash for the current revision)
-    @rtype: C{tuple} of three C{str} and a C{time.struct_time}
+    :rtype: ``tuple`` of three ``str`` and a ``time.struct_time``
     """
     if not path:
         path = _get_program_dir()
@@ -336,22 +302,22 @@ def getversion_nightly(path=None):
     date = time.strptime(date[:19], '%Y-%m-%dT%H:%M:%S')
 
     if not date or not tag or not rev:
-        raise ParseError
+        raise VersionParseError
     return (tag, rev, date, hsh)
 
 
-def getversion_package(path=None):  # pylint: disable=unused-argument
+def getversion_package(path=None):
     """Get version info for an installed package.
 
-    @param path: Unused argument
-    @return:
+    :param path: Unused argument
+    :return:
         - tag: 'pywikibot/__init__.py'
         - rev: '-1 (unknown)'
         - date (date the package was installed locally),
         - hash (git hash for the current revision of 'pywikibot/__init__.py')
-    @rtype: C{tuple} of four C{str}
+    :rtype: ``tuple`` of four ``str``
     """
-    hsh = get_module_version(pywikibot)
+    hsh = ''
     date = get_module_mtime(pywikibot).timetuple()
 
     tag = 'pywikibot/__init__.py'
@@ -360,72 +326,38 @@ def getversion_package(path=None):  # pylint: disable=unused-argument
     return (tag, rev, date, hsh)
 
 
-def getversion_onlinerepo(repo=None):
-    """Retrieve current framework revision number from online repository.
-
-    @param repo: (optional) Online repository location
-    @type repo: URL or string
-    """
+def getversion_onlinerepo(path='branches/master'):
+    """Retrieve current framework git hash from Gerrit."""
     from pywikibot.comms import http
 
-    url = repo or 'https://git.wikimedia.org/feed/pywikibot/core'
-    buf = http.fetch(uri=url,
-                     headers={'user-agent': '{pwb}'}).content.splitlines()
+    # Gerrit API responses include )]}' at the beginning,
+    # make sure to strip it out
+    buf = http.fetch(
+        'https://gerrit.wikimedia.org/r/projects/pywikibot%2Fcore/' + path,
+        headers={'user-agent': '{pwb}'}).text[4:]
     try:
-        hsh = buf[13].split('/')[5][:-1]
+        hsh = json.loads(buf)['revision']
         return hsh
     except Exception as e:
-        raise ParseError(repr(e) + ' while parsing ' + repr(buf))
+        raise VersionParseError('{!r} while parsing {!r}'.format(e, buf))
 
 
-@deprecated('get_module_version, get_module_filename and get_module_mtime')
-def getfileversion(filename):
-    """Retrieve revision number of file.
-
-    Extracts __version__ variable containing Id tag, without importing it.
-    (thus can be done for any file)
-
-    The version variable containing the Id tag is read and
-    returned. Because it doesn't import it, the version can
-    be retrieved from any file.
-    @param filename: Name of the file to get version
-    @type filename: string
-    """
-    _program_dir = _get_program_dir()
-    __version__ = None
-    mtime = None
-    fn = os.path.join(_program_dir, filename)
-    if os.path.exists(fn):
-        with codecs.open(fn, 'r', "utf-8") as f:
-            for line in f.readlines():
-                if line.find('__version__') == 0:
-                    try:
-                        exec(line)
-                    except:
-                        pass
-                    break
-        stat = os.stat(fn)
-        mtime = datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(' ')
-    if mtime and __version__:
-        return u'%s %s %s' % (filename, __version__[5:-1][:7], mtime)
-    else:
-        return None
-
-
-def get_module_version(module):
+@deprecated('pywikibot.__version__', since='20201003')
+def get_module_version(module) -> Optional[str]:  # pragma: no cover
     """
     Retrieve __version__ variable from an imported module.
 
-    @param module: The module instance.
-    @type module: module
-    @return: The version hash without the surrounding text. If not present None.
-    @rtype: str or None
+    :param module: The module instance.
+    :type module: module
+    :return: The version hash without the surrounding text. If not present
+        return None.
     """
     if hasattr(module, '__version__'):
-        return module.__version__[5:-1]
+        return module.__version__
+    return None
 
 
-def get_module_filename(module):
+def get_module_filename(module) -> Optional[str]:
     """
     Retrieve filename from an imported pywikibot module.
 
@@ -433,32 +365,34 @@ def get_module_filename(module):
     with py and another character the last character is discarded when the py
     file exist.
 
-    @param module: The module instance.
-    @type module: module
-    @return: The filename if it's a pywikibot module otherwise None.
-    @rtype: str or None
+    :param module: The module instance.
+    :type module: module
+    :return: The filename if it's a pywikibot module otherwise None.
     """
-    if hasattr(module, '__file__') and os.path.exists(module.__file__):
+    if hasattr(module, '__file__'):
         filename = module.__file__
-        if filename[-4:-1] == '.py' and os.path.exists(filename[:-1]):
-            filename = filename[:-1]
+        if not filename or not os.path.exists(filename):
+            return None
+
         program_dir = _get_program_dir()
         if filename[:len(program_dir)] == program_dir:
             return filename
+    return None
 
 
 def get_module_mtime(module):
     """
     Retrieve the modification time from an imported module.
 
-    @param module: The module instance.
-    @type module: module
-    @return: The modification time if it's a pywikibot module otherwise None.
-    @rtype: datetime or None
+    :param module: The module instance.
+    :type module: module
+    :return: The modification time if it's a pywikibot module otherwise None.
+    :rtype: datetime or None
     """
     filename = get_module_filename(module)
     if filename:
         return datetime.datetime.fromtimestamp(os.stat(filename).st_mtime)
+    return None
 
 
 def package_versions(modules=None, builtins=False, standard_lib=None):
@@ -467,29 +401,27 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
     When builtins or standard_lib are None, they will be included only
     if a version was found in the package.
 
-    @param modules: Modules to inspect
-    @type modules: list of strings
-    @param builtins: Include builtins
-    @type builtins: Boolean, or None for automatic selection
-    @param standard_lib: Include standard library packages
-    @type standard_lib: Boolean, or None for automatic selection
+    :param modules: Modules to inspect
+    :type modules: list of strings
+    :param builtins: Include builtins
+    :type builtins: Boolean, or None for automatic selection
+    :param standard_lib: Include standard library packages
+    :type standard_lib: Boolean, or None for automatic selection
     """
     if not modules:
         modules = sys.modules.keys()
 
-    import distutils.sysconfig
-    std_lib_dir = distutils.sysconfig.get_python_lib(standard_lib=True)
+    std_lib_dir = pathlib.Path(sysconfig.get_paths()['stdlib'])
 
-    root_packages = set([key.split('.')[0]
-                         for key in modules])
+    root_packages = {key.split('.')[0] for key in modules}
 
-    builtin_packages = set([name.split('.')[0] for name in root_packages
-                            if name in sys.builtin_module_names or
-                            '_' + name in sys.builtin_module_names])
+    builtin_packages = {name.split('.')[0] for name in root_packages
+                        if name in sys.builtin_module_names
+                        or '_' + name in sys.builtin_module_names}
 
     # Improve performance by removing builtins from the list if possible.
     if builtins is False:
-        root_packages = list(root_packages - builtin_packages)
+        root_packages = root_packages - builtin_packages
 
     std_lib_packages = []
 
@@ -498,8 +430,8 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
 
     for name in root_packages:
         try:
-            package = __import__(name, level=0)
-        except Exception as e:
+            package = import_module(name)
+        except ImportError as e:
             data[name] = {'name': name, 'err': e}
             continue
 
@@ -510,44 +442,46 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
 
         if '__file__' in package.__dict__:
             # Determine if this file part is of the standard library.
-            if os.path.normcase(package.__file__).startswith(
-                    os.path.normcase(std_lib_dir)):
+            # possible Namespace package
+            if not hasattr(package, '__file__') or package.__file__ is None:
+                _file = None
+                _path = pathlib.Path(package.__path__[0])
+            else:
+                _file = pathlib.Path(package.__file__)
+                _path = _file.parent
+            if _path == std_lib_dir:
                 std_lib_packages.append(name)
                 if standard_lib is False:
                     continue
-                info['type'] = 'standard libary'
+                info['type'] = 'standard library'
 
             # Strip '__init__.py' from the filename.
-            path = package.__file__
-            if '__init__.py' in path:
-                path = path[0:path.index('__init__.py')]
-
-            if sys.version_info[0] == 2:
-                path = path.decode(sys.getfilesystemencoding())
+            if (not hasattr(package, '__file__')
+                    or package.__file__ is None
+                    or _file.name == '__init__.py'):
+                path = _path
+            else:
+                path = _file
 
             info['path'] = path
-            assert(path not in paths)
+            assert path not in paths, \
+                   'Path {} of the package {} is in defined paths as {}' \
+                   .format(path, name, paths[path])
             paths[path] = name
 
         if '__version__' in package.__dict__:
             info['ver'] = package.__version__
-        elif name == 'mwlib':  # mwlib 0.14.3 does not include a __init__.py
-            module = __import__(name + '._version',
-                                fromlist=['_version'], level=0)
-            if '__version__' in module.__dict__:
-                info['ver'] = module.__version__
-                path = module.__file__
-                path = path[0:path.index('_version.')]
-                info['path'] = path
+        elif name.startswith('unicodedata'):
+            info['ver'] = package.unidata_version
 
         # If builtins or standard_lib is None,
         # only include package if a version was found.
-        if (builtins is None and name in builtin_packages) or \
-                (standard_lib is None and name in std_lib_packages):
+        if builtins is None and name in builtin_packages \
+           or standard_lib is None and name in std_lib_packages:
             if 'ver' in info:
                 data[name] = info
             else:
-                # Remove the entry from paths, so it isnt processed below
+                # Remove the entry from paths, so it isn't processed below
                 del paths[info['path']]
         else:
             data[name] = info
@@ -555,8 +489,23 @@ def package_versions(modules=None, builtins=False, standard_lib=None):
     # Remove any pywikibot sub-modules which were loaded as a package.
     # e.g. 'wikipedia_family.py' is loaded as 'wikipedia'
     _program_dir = _get_program_dir()
+    dir_parts = pathlib.Path(_program_dir).parts
+    length = len(dir_parts)
     for path, name in paths.items():
-        if _program_dir in path:
+        lib_parts = path.parts
+        if dir_parts != lib_parts[:length]:
+            continue
+        if lib_parts[length] != '.tox':
             del data[name]
 
     return data
+
+
+ParseError = VersionParseError
+
+wrapper = ModuleDeprecationWrapper(__name__)
+wrapper.add_deprecated_attr(
+    'ParseError',
+    replacement_name='pywikibot.exceptions.VersionParseError',
+    since='20210423',
+    future_warning=True)

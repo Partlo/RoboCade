@@ -1,27 +1,23 @@
-# -*- coding: utf-8  -*-
 """Tests for scripts/protect.py."""
 #
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
+import unittest
+from contextlib import suppress
 
 import pywikibot
 import pywikibot.page
-
 from scripts import protect
-
-from tests.aspects import unittest, ScriptMainTestCase
+from tests.aspects import ScriptMainTestCase
 
 
 class TestProtectionBot(ScriptMainTestCase):
 
     """Test ProtectionBot protect/unprotect capabilities."""
 
-    family = 'test'
+    family = 'wikipedia'
     code = 'test'
 
     sysop = True
@@ -33,11 +29,11 @@ class TestProtectionBot(ScriptMainTestCase):
         protect.main('-page:User:Sn1per/ProtectTest1', '-always',
                      '-unprotect', '-summary=Pywikibot protect.py unit tests')
         page = pywikibot.Page(site, 'User:Sn1per/ProtectTest1')
-        self.assertEqual(len(list(page.protection())), 0)
+        self.assertIsEmpty(list(page.protection()))
         protect.main('-page:User:Sn1per/ProtectTest1', '-always',
                      '-default', '-summary=Pywikibot protect.py unit tests')
         page = pywikibot.Page(site, 'User:Sn1per/ProtectTest1')
-        self.assertEqual(len(list(page.protection())), 2)
+        self.assertLength(list(page.protection()), 2)
 
     def test_summary(self):
         """Test automatic (un)protection summary on the test wiki."""
@@ -61,8 +57,7 @@ class TestProtectionBot(ScriptMainTestCase):
             '([Edit=Allow only administrators] (indefinite) [Move=Allow only '
             'administrators] (indefinite))')
 
-if __name__ == '__main__':
-    try:
+
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

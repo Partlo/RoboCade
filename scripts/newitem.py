@@ -1,11 +1,10 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 This script creates new items on Wikidata based on certain criteria.
 
 * When was the (Wikipedia) page created?
 * When was the last edit on the page?
-* Does the page contain interwiki's?
+* Does the page contain interwikis?
 
 This script understands various command-line arguments:
 
@@ -15,116 +14,187 @@ This script understands various command-line arguments:
 -pageage          The minimum number of days that has passed since the page was
                   created.
 
--touch            Do a null edit on every page which has a wikibase item.
+-touch            Do a null edit on every page which has a Wikibase item.
+                  Be careful, this option can trigger edit rates or captchas
+                  if your account is not autoconfirmed.
 
 """
 #
-# (C) Multichill, 2014
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2020
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
+from datetime import timedelta
+from textwrap import fill
 
 import pywikibot
-from pywikibot import pagegenerators, WikidataBot
-from datetime import timedelta
+from pywikibot import pagegenerators
+from pywikibot.backports import Set
+from pywikibot.bot import NoRedirectPageBot, WikidataBot
+from pywikibot.exceptions import (
+    LockedPageError,
+    NoCreateError,
+    NoPageError,
+    PageSaveRelatedError,
+)
 
 
-class NewItemRobot(WikidataBot):
+DELETION_TEMPLATES = ('Q4847311', 'Q6687153', 'Q21528265')
+
+
+class NewItemRobot(WikidataBot, NoRedirectPageBot):
 
     """A bot to create new items."""
 
-    def __init__(self, generator, **kwargs):
-        """Only accepts options defined in availableOptions."""
-        self.availableOptions.update({
+    treat_missing_item = True
+
+    def __init__(self, generator, **kwargs) -> None:
+        """Only accepts options defined in available_options."""
+        self.available_options.update({
+            'always': True,
             'lastedit': 7,
             'pageage': 21,
-            'touch': False,
+            'touch': 'newly',  # Can be False, newly (pages linked to newly
+                               # created items) or True (touch all pages)
         })
 
-        super(NewItemRobot, self).__init__(**kwargs)
-        self.generator = pagegenerators.PreloadingGenerator(generator)
-        self.pageAge = self.getOption('pageage')
-        self.lastEdit = self.getOption('lastedit')
-        self.pageAgeBefore = self.repo.getcurrenttime() - timedelta(days=self.pageAge)
-        self.lastEditBefore = self.repo.getcurrenttime() - timedelta(days=self.lastEdit)
-        self.treat_missing_item = True
-        pywikibot.output('Page age is set to %s days so only pages created'
-                         '\nbefore %s will be considered.'
-                         % (self.pageAge, self.pageAgeBefore.isoformat()))
-        pywikibot.output('Last edit is set to %s days so only pages last edited'
-                         '\nbefore %s will be considered.'
-                         % (self.lastEdit, self.lastEditBefore.isoformat()))
+        super().__init__(**kwargs)
+        self.generator = generator
+        self._skipping_templates = {}
 
-    def treat(self, page, item):
-        """Treat page/item."""
-        if item and item.exists():
-            pywikibot.output(u'%s already has an item: %s.' % (page, item))
-            if self.getOption('touch'):
-                pywikibot.output(u'Doing a null edit on the page.')
-                page.put(page.text)
-            return
+    def setup(self) -> None:
+        """Setup ages."""
+        super().setup()
 
-        self.current_page = page
+        self.pageAgeBefore = self.repo.server_time() - timedelta(
+            days=self.opt.pageage)
+        self.lastEditBefore = self.repo.server_time() - timedelta(
+            days=self.opt.lastedit)
+        pywikibot.output('Page age is set to {} days so only pages created'
+                         '\nbefore {} will be considered.\n'
+                         .format(self.opt.pageage,
+                                 self.pageAgeBefore.isoformat()))
+        pywikibot.output(
+            'Last edit is set to {} days so only pages last edited'
+            '\nbefore {} will be considered.\n'
+            .format(self.opt.lastedit, self.lastEditBefore.isoformat()))
 
-        if page.isRedirectPage():
-            pywikibot.output(u'%s is a redirect page. Skipping.' % page)
-            return
+    @staticmethod
+    def _touch_page(page) -> None:
+        try:
+            pywikibot.output('Doing a null edit on the page.')
+            page.touch()
+        except (NoCreateError, NoPageError):
+            pywikibot.error('Page {} does not exist.'.format(
+                page.title(as_link=True)))
+        except LockedPageError:
+            pywikibot.error('Page {} is locked.'.format(
+                page.title(as_link=True)))
+        except PageSaveRelatedError:
+            pywikibot.error('Page {} not saved.'.format(
+                page.title(as_link=True)))
+
+    def _callback(self, page, exc) -> None:
+        if exc is None and self.opt.touch:
+            self._touch_page(page)
+
+    def get_skipping_templates(self, site) -> Set[pywikibot.Page]:
+        """Get templates which leads the page to be skipped.
+
+        If the script is used for multiple sites, hold the skipping templates
+        as attribute.
+        """
+        if site in self._skipping_templates:
+            return self._skipping_templates[site]
+
+        skipping_templates = set()
+        pywikibot.output('Retrieving skipping templates for site {}...'
+                         .format(site))
+        for item in DELETION_TEMPLATES:
+            template = site.page_from_repository(item)
+
+            if template is None:
+                continue
+
+            skipping_templates.add(template)
+            # also add redirect templates
+            skipping_templates.update(
+                template.getReferences(follow_redirects=False,
+                                       with_template_inclusion=False,
+                                       filter_redirects=True,
+                                       namespaces=site.namespaces.TEMPLATE))
+        self._skipping_templates[site] = skipping_templates
+        return skipping_templates
+
+    def skip_templates(self, page) -> str:
+        """Check whether the page is to be skipped due to skipping template.
+
+        :param page: treated page
+        :type page: pywikibot.Page
+        :return: the template which leads to skip
+        """
+        skipping_templates = self.get_skipping_templates(page.site)
+        for template, _ in page.templatesWithParams():
+            if template in skipping_templates:
+                return template.title(with_ns=False)
+        return ''
+
+    def skip_page(self, page) -> bool:
+        """Skip pages which are unwanted to treat."""
         if page.editTime() > self.lastEditBefore:
             pywikibot.output(
-                u'Last edit on %s was on %s.\nToo recent. Skipping.'
-                % (page, page.editTime().isoformat()))
-            return
+                'Last edit on {page} was on {page.latest_revision.timestamp}.'
+                '\nToo recent. Skipping.'.format(page=page))
+            return True
 
         if page.oldest_revision.timestamp > self.pageAgeBefore:
             pywikibot.output(
-                u'Page creation of %s on %s is too recent. Skipping.'
-                % (page, page.editTime().isoformat()))
-            return
+                'Page creation of {page} on {page.oldest_revision.timestamp} '
+                'is too recent. Skipping.'.format(page=page))
+            return True
+
+        if page.isCategoryRedirect():
+            pywikibot.output('{} is a category redirect. Skipping.'
+                             .format(page))
+            return True
 
         if page.langlinks():
             # FIXME: Implement this
             pywikibot.output(
-                "Found language links (interwiki links).\n"
-                "Haven't implemented that yet so skipping.")
+                'Found language links (interwiki links) for {}.\n'
+                "Haven't implemented that yet so skipping."
+                .format(page))
+            return True
+
+        template = self.skip_templates(page)
+        if template:
+            pywikibot.output('%s contains {{%s}}. Skipping.'
+                             % (page, template))
+            return True
+
+        return super().skip_page(page)
+
+    def treat_page_and_item(self, page, item) -> None:
+        """Treat page/item."""
+        if item and item.exists():
+            pywikibot.output('{} already has an item: {}.'
+                             .format(page, item))
+            if self.opt.touch is True:
+                self._touch_page(page)
             return
 
-        # FIXME: i18n
-        summary = (u'Bot: New item with sitelink from %s'
-                   % page.title(asLink=True, insite=self.repo))
-
-        data = {'sitelinks':
-                {page.site.dbName():
-                 {'site': page.site.dbName(),
-                  'title': page.title()}
-                 },
-                'labels':
-                {page.site.lang:
-                 {'language': page.site.lang,
-                  'value': page.title()}
-                 }
-                }
-
-        pywikibot.output(summary)
-
-        item = pywikibot.ItemPage(page.site.data_repository())
-        item.editEntity(data, summary=summary)
-        # And do a null edit to force update
-        page.put(page.text)
+        self.create_item_for_page(
+            page, callback=lambda _, exc: self._callback(page, exc))
 
 
-def main(*args):
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
     # Process global args and prepare generator args parser
     local_args = pywikibot.handle_args(args)
@@ -132,23 +202,34 @@ def main(*args):
 
     options = {}
     for arg in local_args:
-        if (
-                arg.startswith('-pageage:') or
-                arg.startswith('-lastedit:')):
+        if arg.startswith(('-pageage:', '-lastedit:')):
             key, val = arg.split(':', 1)
             options[key[1:]] = int(val)
-        elif gen.handleArg(arg):
+        elif gen.handle_arg(arg):
             pass
         else:
             options[arg[1:].lower()] = True
 
-    generator = gen.getCombinedGenerator()
+    generator = gen.getCombinedGenerator(preload=True)
     if not generator:
-        pywikibot.showHelp()
+        pywikibot.bot.suggest_help(missing_generator=True)
         return
 
     bot = NewItemRobot(generator, **options)
+    if not bot.site.logged_in():
+        bot.site.login()
+    user = pywikibot.User(bot.site, bot.site.username())
+    if bot.opt.touch == 'newly' and 'autoconfirmed' not in user.groups():
+        pywikibot.warning(fill(
+            'You are logged in as {}, an account that is '
+            'not in the autoconfirmed group on {}. Script '
+            'will not touch pages linked to newly created '
+            'items to avoid triggering edit rates or '
+            'captchas. Use -touch param to force this.'
+            .format(user.username, bot.site.sitename)))
+        bot.opt.touch = False
     bot.run()
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()

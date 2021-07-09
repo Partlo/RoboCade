@@ -1,21 +1,19 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """Test Interwiki Graph functionality."""
 #
-# (C) Pywikibot team, 2015
+# (C) Pywikibot team, 2015-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
+import unittest
+from contextlib import suppress
 
 from pywikibot import interwiki_graph
-
-from tests.aspects import unittest, SiteAttributeTestCase
+from tests.aspects import SiteAttributeTestCase, require_modules
 from tests.utils import DryPage
 
 
+@require_modules('pydot')
 class TestWiktionaryGraph(SiteAttributeTestCase):
 
     """Tests for interwiki links to local sites."""
@@ -39,8 +37,6 @@ class TestWiktionaryGraph(SiteAttributeTestCase):
     @classmethod
     def setUpClass(cls):
         """Setup test class."""
-        if isinstance(interwiki_graph.pydot, ImportError):
-            raise unittest.SkipTest('pydot not installed')
         super(TestWiktionaryGraph, cls).setUpClass()
 
         cls.pages = {
@@ -50,47 +46,38 @@ class TestWiktionaryGraph(SiteAttributeTestCase):
             'pl': DryPage(cls.plwikt, 'origin'),
         }
 
-    def test_simple_graph(self):
-        """Test that GraphDrawer.createGraph does not raise exception."""
+    def setUp(self):
+        """Setup interwiki_graph data."""
+        super().setUp()
         data = interwiki_graph.Subject(self.pages['en'])
-
         data.found_in[self.pages['en']] = [self.pages['fr'], self.pages['pl']]
         data.found_in[self.pages['fr']] = [self.pages['en'], self.pages['pl']]
         data.found_in[self.pages['pl']] = [self.pages['en'], self.pages['fr']]
+        self.data = data
 
-        drawer = interwiki_graph.GraphDrawer(data)
-
+    def test_simple_graph(self):
+        """Test that GraphDrawer.createGraph does not raise exception."""
+        drawer = interwiki_graph.GraphDrawer(self.data)
         drawer.createGraph()
 
     def test_octagon(self):
         """Test octagon nodes."""
-        data = interwiki_graph.Subject(self.pages['en'])
+        self.data.found_in[self.pages['en2']] = [self.pages['fr']]
+        drawer = interwiki_graph.GraphDrawer(self.data)
 
-        data.found_in[self.pages['en']] = [self.pages['fr'], self.pages['pl']]
-        data.found_in[self.pages['en2']] = [self.pages['fr']]
-        data.found_in[self.pages['fr']] = [self.pages['en'], self.pages['pl']]
-        data.found_in[self.pages['pl']] = [self.pages['en'], self.pages['fr']]
-
-        drawer = interwiki_graph.GraphDrawer(data)
+        self.assertEqual({self.pages['en'].site}, drawer._octagon_site_set())
 
         drawer.createGraph()
-
         nodes = drawer.graph.obj_dict['nodes']
-        self.assertEqual(
-            nodes['"pl:origin"'][0]['attributes']['shape'],
-            'rectangle')
 
-        self.assertEqual(
-            nodes['"fr:origin"'][0]['attributes']['shape'],
-            'rectangle')
-
-        self.assertEqual(
-            nodes['"en:origin"'][0]['attributes']['shape'],
-            'octagon')
+        for node, shape in [('"pl:origin"', 'rectangle'),
+                            ('"fr:origin"', 'rectangle'),
+                            ('"en:origin"', 'octagon')]:
+            with self.subTest(node=node):
+                self.assertEqual(
+                    nodes[node][0]['attributes']['shape'], shape)
 
 
-if __name__ == '__main__':
-    try:
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

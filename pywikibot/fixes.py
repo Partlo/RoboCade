@@ -1,19 +1,15 @@
-# -*- coding: utf-8  -*-
 """File containing all standard fixes."""
 #
-# (C) Pywikibot team, 2008-2010
+# (C) Pywikibot team, 2008-2020
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
 import os.path
 
 from pywikibot import config
 
-__version__ = '$Id$'
 
-parameter_help = u"""
+parameter_help = """
                   Currently available predefined fixes are:
 
                   * HTML        - Convert HTML tags to wiki syntax, and
@@ -30,16 +26,16 @@ parameter_help = u"""
                                   in German
                   * music       - Links auf Begriffsklärungen in German
                   * datum       - specific date formats in German
-                  * correct-ar  - Corrections for Arabic Wikipedia and any
+                  * correct-ar  - Typo corrections for Arabic Wikipedia and any
                                   Arabic wiki.
-                  * yu-tld      - the yu top-level domain will soon be
-                                  disabled, see
+                  * yu-tld      - Fix links to .yu domains because it is
+                                  disabled, see:
+                                  https://lists.wikimedia.org/pipermail/wikibots-l/2009-February/000290.html
                   * fckeditor   - Try to convert FCKeditor HTML tags to wiki
                                   syntax.
-                                  https://lists.wikimedia.org/pipermail/wikibots-l/2009-February/000290.html
 """
 
-__doc__ = __doc__ + parameter_help
+__doc__ += parameter_help
 
 fixes = {
     # These replacements will convert HTML to wiki syntax where possible, and
@@ -61,18 +57,23 @@ fixes = {
             (r'(?i)<em>(.*?)</em>',            r"''\1''"),
             # horizontal line without attributes in a single line
             (r'(?i)([\r\n])<hr[ /]*>([\r\n])', r'\1----\2'),
-            # horizontal line without attributes with more text in the same line
+            # horizontal line without attributes with more text in same line
             #   (r'(?i) +<hr[ /]*> +',             r'\r\n----\r\n'),
             # horizontal line with attributes; can't be done with wiki syntax
             # so we only make it XHTML compliant
             (r'(?i)<hr ([^>/]+?)>',            r'<hr \1 />'),
             # a header where only spaces are in the same line
-            (r'(?i)([\r\n]) *<h1> *([^<]+?) *</h1> *([\r\n])',  r"\1= \2 =\3"),
-            (r'(?i)([\r\n]) *<h2> *([^<]+?) *</h2> *([\r\n])',  r"\1== \2 ==\3"),
-            (r'(?i)([\r\n]) *<h3> *([^<]+?) *</h3> *([\r\n])',  r"\1=== \2 ===\3"),
-            (r'(?i)([\r\n]) *<h4> *([^<]+?) *</h4> *([\r\n])',  r"\1==== \2 ====\3"),
-            (r'(?i)([\r\n]) *<h5> *([^<]+?) *</h5> *([\r\n])',  r"\1===== \2 =====\3"),
-            (r'(?i)([\r\n]) *<h6> *([^<]+?) *</h6> *([\r\n])',  r"\1====== \2 ======\3"),
+            (r'(?i)([\r\n]) *<h1> *([^<]+?) *</h1> *([\r\n])', r'\1= \2 =\3'),
+            (r'(?i)([\r\n]) *<h2> *([^<]+?) *</h2> *([\r\n])',
+             r'\1== \2 ==\3'),
+            (r'(?i)([\r\n]) *<h3> *([^<]+?) *</h3> *([\r\n])',
+             r'\1=== \2 ===\3'),
+            (r'(?i)([\r\n]) *<h4> *([^<]+?) *</h4> *([\r\n])',
+             r'\1==== \2 ====\3'),
+            (r'(?i)([\r\n]) *<h5> *([^<]+?) *</h5> *([\r\n])',
+             r'\1===== \2 =====\3'),
+            (r'(?i)([\r\n]) *<h6> *([^<]+?) *</h6> *([\r\n])',
+             r'\1====== \2 ======\3'),
             # TODO: maybe we can make the bot replace <p> tags with \r\n's.
         ],
         'exceptions': {
@@ -90,12 +91,9 @@ fixes = {
     'grammar-de': {
         'regex': True,
         'msg': {
-            'de': u'Bot: korrigiere Grammatik',
+            'de': 'Bot: korrigiere Grammatik',
         },
         'replacements': [
-            #   (u'([Ss]owohl) ([^,\.]+?), als auch', r'\1 \2 als auch'),
-            #   (u'([Ww]eder) ([^,\.]+?), noch', r'\1 \2 noch'),
-            #
             # Vorsicht bei Substantiven, z. B. 3-Jähriger!
             (r'(\d+)(minütig|stündig|tägig|wöchig|jährig|minütlich|stündlich'
              r'|täglich|wöchentlich|jährlich|fach|mal|malig|köpfig|teilig'
@@ -104,34 +102,38 @@ fixes = {
             # zusammengesetztes Wort, Bindestrich wird durchgeschleift
             (r'(?<!\w)(\d+|\d+[.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min'
              r'|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal'
-             r'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)([²³]?-[\w\[])', r'\1-\2\3'),
+             r'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)([²³]?-[\w\[])',
+             r'\1-\2\3'),
             # Größenangabe ohne Leerzeichen vor Einheit
             # weggelassen wegen vieler falsch Positiver: s, A, V, C, S, J, %
             (r'(?<!\w)(\d+|\d+[.,]\d+)(\$|€|DM|£|¥|mg|g|kg|ml|cl|l|t|ms|min'
              r'|µm|mm|cm|dm|m|km|ha|°C|kB|MB|GB|TB|W|kW|MW|GW|PS|Nm|eV|kcal'
-             r'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)(?=\W|²|³|$)', r'\1 \2'),
+             r'|mA|mV|kV|Ω|Hz|kHz|MHz|GHz|mol|Pa|Bq|Sv|mSv)(?=\W|²|³|$)',
+             r'\1 \2'),
             # Temperaturangabe mit falsch gesetztem Leerzeichen
             (r'(?<!\w)(\d+|\d+[.,]\d+)° C(?=\W|²|³|$)', r'\1 °C'),
             # Kein Leerzeichen nach Komma
             (r'([a-zäöüß](\]\])?,)((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1 \3'),
             # Leerzeichen und Komma vertauscht
             (r'([a-zäöüß](\]\])?) ,((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1, \3'),
-            # Plenks (d. h. Leerzeichen auch vor dem Komma/Punkt/Ausrufezeichen/Fragezeichen)
-            # Achtung bei Französisch: https://de.wikipedia.org/wiki/Plenk#Sonderfall_Franz.C3.B6sisch
-            # Leerzeichen vor Doppelpunkt/Semikolon kann korrekt sein, nach irgendeiner Norm für Zitationen.
-            (r'([a-zäöüß](\]\])?) ([,.!?]) ((\[\[)?[a-zäöüA-ZÄÖÜ])', r'\1\3 \4'),
-            #   (u'([a-z]\.)([A-Z])', r'\1 \2'),
+            # Plenks (Leerzeichen vor Komma/Punkt/Ausrufezeichen/Fragezeichen)
+            # Achtung bei Französisch:
+            # https://de.wikipedia.org/wiki/Plenk#Franz.C3.B6sische_Sprache
+            # Leerzeichen vor Doppelpunkt/Semikolon kann korrekt sein,
+            # z.B. nach Quellenangaben
+            (r'([a-zäöüß](\]\])?) ([,.!?]) ((\[\[)?[a-zäöüA-ZÄÖÜ])',
+             r'\1\3 \4'),
         ],
         'exceptions': {
             'inside-tags': [
                 'nowiki',
                 'comment',
+                'gallery',          # because of filenames
+                'hyperlink',        # e.g. commas in URLs
                 'math',
-                'pre',           # because of code examples
-                'source',        # because of code examples
-                'startspace',    # because of code examples
-                'hyperlink',     # e.g. commas in URLs
-                'gallery',       # because of filenames
+                'pre',              # because of code examples
+                'startspace',       # because of code examples
+                'syntaxhighlight',  # because of code examples
                 'timeline',
             ],
             'text-contains': [
@@ -152,15 +154,20 @@ fixes = {
                 r'DOS/4GW',   # Software
                 r'ntfs-3g',   # Dateisystem-Treiber
                 r'/\w(,\w)*/',      # Laut-Aufzählung in der Linguistik
-                r'[xyz](,[xyz])+',  # Variablen in der Mathematik (unklar, ob Leerzeichen hier Pflicht sind)
-                r'(?m)^;(.*?)$',    # Definitionslisten, dort gibt es oft absichtlich Leerzeichen vor Doppelpunkten
+                # Variablen in der Mathematik
+                # (unklar, ob Leerzeichen hier Pflicht sind)
+                r'[xyz](,[xyz])+',
+                # Definitionslisten, dort gibt es oft absichtlich Leerzeichen
+                # vor Doppelpunkten
+                r'(?m)^;(.*?)$',
                 r'\d+h( |&nbsp;)\d+m',
                 # Schreibweise für Zeiten, vor allem in Film-Infoboxen.
                 # Nicht korrekt, aber dafür schön kurz.
                 r'(?i)\[\[(Bild|Image|Media):.+?\|',  # Dateinamen auslassen
                 r'{{bgc\|.*?}}',                      # Hintergrundfarbe
                 r'<sup>\d+m</sup>',                   # bei chemischen Formeln
-                r'\([A-Z][A-Za-z]*(,[A-Z][A-Za-z]*(<sup>.*?</sup>|<sub>.*?</sub>|))+\)'
+                r'\([A-Z][A-Za-z]*(,[A-Z][A-Za-z]*'
+                r'(<sup>.*?</sup>|<sub>.*?</sub>|))+\)'
                 # chemische Formel, z. B. AuPb(Pb,Sb,Bi)Te.
                 # Hier sollen keine Leerzeichen hinter die Kommata.
             ],
@@ -191,7 +198,8 @@ fixes = {
             # external link and description separated by a dash.
             # ATTENTION: while this is a mistake in most cases, there are some
             # valid URLs that contain dashes!
-            (r'\[(?P<url>https?://[^\|\]\s]+?) *\| *(?P<label>[^\|\]]+?)\]', r'[\g<url> \g<label>]'),
+            (r'\[(?P<url>https?://[^\|\]\s]+?) *\| *(?P<label>[^\|\]]+?)\]',
+             r'[\g<url> \g<label>]'),
             # wiki link closed by single bracket.
             # ATTENTION: There are some false positives, for example
             # Brainfuck code examples or MS-DOS parameter instructions.
@@ -212,8 +220,8 @@ fixes = {
                 'comment',
                 'math',
                 'pre',
-                'source',        # because of code examples
-                'startspace',    # because of code examples
+                'startspace',       # because of code examples
+                'syntaxhighlight',  # because of code examples
             ],
             'text-contains': [
                 r'http://.*?object=tx\|',                # regular dash in URL
@@ -243,11 +251,13 @@ fixes = {
             # external link and description separated by a dash, with
             # whitespace in front of the dash, so that it is clear that
             # the dash is not a legitimate part of the URL.
-            (r'\[(?P<url>https?://[^\|\] \r\n]+?) +\| *(?P<label>[^\|\]]+?)\]', r'[\g<url> \g<label>]'),
+            (r'\[(?P<url>https?://[^\|\] \r\n]+?) +\| *(?P<label>[^\|\]]+?)\]',
+             r'[\g<url> \g<label>]'),
             # dash in external link, where the correct end of the URL can
             # be detected from the file extension. It is very unlikely that
             # this will cause mistakes.
-            (r'\[(?P<url>https?://[^\|\] ]+?(\.pdf|\.html|\.htm|\.php|\.asp|\.aspx|\.jsp)) *\|'
+            (r'\[(?P<url>https?://[^\|\] ]+?'
+             r'(\.pdf|\.html|\.htm|\.php|\.asp|\.aspx|\.jsp)) *\|'
              r' *(?P<label>[^\|\]]+?)\]', r'[\g<url> \g<label>]'),
         ],
         'exceptions': {
@@ -256,8 +266,8 @@ fixes = {
                 'comment',
                 'math',
                 'pre',
-                'source',        # because of code examples
-                'startspace',    # because of code examples
+                'startspace',       # because of code examples
+                'syntaxhighlight',  # because of code examples
             ],
         }
     },
@@ -265,14 +275,16 @@ fixes = {
     'case-de': {  # German upper / lower case issues
         'regex': True,
         'msg': {
-            'de': u'Bot: Korrigiere Groß-/Kleinschreibung',
+            'de': 'Bot: Korrigiere Groß-/Kleinschreibung',
         },
         'replacements': [
             (r'\batlantische(r|n|) Ozean', r'Atlantische\1 Ozean'),
             (r'\bdeutsche(r|n|) Bundestag\b', r'Deutsche\1 Bundestag'),
-            (r'\bdeutschen Bundestags\b', r'Deutschen Bundestags'),  # Aufpassen, z. B. 'deutsche Bundestagswahl'
+            # Aufpassen, z. B. 'deutsche Bundestagswahl'
+            (r'\bdeutschen Bundestags\b', r'Deutschen Bundestags'),
             (r'\bdeutsche(r|n|) Reich\b', r'Deutsche\1 Reich'),
-            (r'\bdeutschen Reichs\b', r'Deutschen Reichs'),  # Aufpassen, z. B. 'deutsche Reichsgrenzen'
+            # Aufpassen, z. B. 'deutsche Reichsgrenzen'
+            (r'\bdeutschen Reichs\b', r'Deutschen Reichs'),
             (r'\bdritte(n|) Welt(?!krieg)', r'Dritte\1 Welt'),
             (r'\bdreißigjährige(r|n|) Krieg', r'Dreißigjährige\1 Krieg'),
             (r'\beuropäische(n|) Gemeinschaft', r'Europäische\1 Gemeinschaft'),
@@ -301,27 +313,28 @@ fixes = {
     'vonbis': {
         'regex': True,
         'msg': {
-            'de': u'Bot: Ersetze Binde-/Gedankenstrich durch "bis"',
+            'de': 'Bot: Ersetze Binde-/Gedankenstrich durch "bis"',
         },
         'replacements': [
             # Bindestrich, Gedankenstrich, Geviertstrich
-            (r'(von \d{3,4}) *(-|&ndash;|–|&mdash;|—) *(\d{3,4})', r'\1 bis \3'),
+            (r'(von \d{3,4}) *(-|&ndash;|–|&mdash;|—) *(\d{3,4})',
+             r'\1 bis \3'),
         ],
     },
 
     # some disambiguation stuff for de:
-    # python replace.py -fix:music -subcat:Album
+    # python pwb.py replace -fix:music -subcat:Album
     'music': {
         'regex': False,
         'msg': {
-            'de': u'Bot: korrigiere Links auf Begriffsklärungen',
+            'de': 'Bot: korrigiere Links auf Begriffsklärungen',
         },
         'replacements': [
-            (u'[[CD]]', u'[[Audio-CD|CD]]'),
-            (u'[[LP]]', u'[[Langspielplatte|LP]]'),
-            (u'[[EP]]', u'[[Extended Play|EP]]'),
-            (u'[[MC]]', u'[[Musikkassette|MC]]'),
-            (u'[[Single]]', u'[[Single (Musik)|Single]]'),
+            ('[[CD]]', '[[Audio-CD|CD]]'),
+            ('[[LP]]', '[[Langspielplatte|LP]]'),
+            ('[[EP]]', '[[Extended Play|EP]]'),
+            ('[[MC]]', '[[Musikkassette|MC]]'),
+            ('[[Single]]', '[[Single (Musik)|Single]]'),
         ],
         'exceptions': {
             'inside-tags': [
@@ -331,26 +344,18 @@ fixes = {
     },
 
     # format of dates of birth and death, for de:
-    # python replace.py -fix:datum -ref:Vorlage:Personendaten
+    # python pwb.py replace -fix:datum -ref:Vorlage:Personendaten
     'datum': {
         'regex': True,
         'msg': {
-            'de': u'Bot: Korrigiere Datumsformat',
+            'de': 'Bot: Korrigiere Datumsformat',
         },
         'replacements': [
-            # space after birth sign w/ year
-            #   (u'\(\*(\d{3,4})', u'(* \\1'),
-            # space after death sign w/ year
-            #   (u'†(\d{3,4})', u'† \\1'),
-            #   (u'&dagger;(\d{3,4})', u'† \\1'),
-            # space after birth sign w/ linked date
-            #   (u'\(\*\[\[(\d)', u'(* [[\\1'),
-            # space after death sign w/ linked date
-            #   (u'†\[\[(\d)', u'† [[\\1'),
-            #   (u'&dagger;\[\[(\d)', u'† [[\\1'),
             (r'\[\[(\d+\. (?:Januar|Februar|März|April|Mai|Juni|Juli|August|'
-             r'September|Oktober|November|Dezember)) (\d{1,4})\]\]', r'[[\1]] [[\2]]'),
-            # Keine führende Null beim Datum (ersteinmal nur bei denen, bei denen auch ein Leerzeichen fehlt)
+             r'September|Oktober|November|Dezember)) (\d{1,4})\]\]',
+             r'[[\1]] [[\2]]'),
+            # Keine führende Null beim Datum
+            # (erst einmal nur bei fehlenden Leerzeichen)
             (r'0(\d+)\.(Januar|Februar|März|April|Mai|Juni|Juli|August|'
              r'September|Oktober|November|Dezember)', r'\1. \2'),
             # Kein Leerzeichen zwischen Tag und Monat
@@ -372,30 +377,40 @@ fixes = {
     },
 
     'isbn': {
+        'generator': [
+            r'-search:insource:/nowiki\>ISBN:? *(?:&nbsp;|&\#160;)? *[0-9]/',
+            '-namespace:0'],
         'regex': True,
         'msg': 'isbn-formatting',  # use i18n translations
         'replacements': [
             # Remove colon between the word ISBN and the number
             (r'ISBN: (\d+)', r'ISBN \1'),
             # superfluous word "number"
-            (r'ISBN( number| no\.?| No\.?|-Nummer|-Nr\.):? (\d+)', r'ISBN \2'),
-            # Space, minus, dot,  hypen, en dash, em dash, etc. instead of
-            # hyphen-minus as separator, or spaces between digits and separators.
+            (r'ISBN(?: [Nn]umber| [Nn]o\.?|-Nummer|-Nr\.):? (\d+)',
+             r'ISBN \1'),
+            # Space, minus, dot, hyphen, en dash, em dash, etc. instead of
+            # hyphen-minus as separator,
+            # or spaces between digits and separators.
             # Note that these regular expressions also match valid ISBNs, but
             # these won't be changed.
             # These two regexes don't verify that the ISBN is of a valid format
-            # but just change separators into normal hypens. The isbn script
+            # but just change separators into normal hyphens. The isbn script
             # does checks and similar but does only match ISBNs with digits and
-            # hypens (and optionally a X/x at the end).
+            # hyphens (and optionally a X/x at the end).
             (r'ISBN (978|979) *[\- −.‐-―] *(\d+) *[\- −.‐-―] *(\d+) '
              r'*[\- −.‐-―] *(\d+) *[\- −.‐-―] *(\d)(?!\d)',
              r'ISBN \1-\2-\3-\4-\5'),  # ISBN-13
 
-            (r'ISBN (\d+) *[\- −.‐-―] *(\d+) *[\- −.‐-―] *(\d+) *[\- −.‐-―] *(\d|X|x)(?!\d)',
+            (r'ISBN (\d+) *[\- −.‐-―] *(\d+) *[\- −.‐-―] *(\d+) *'
+             r'[\- −.‐-―] *(\d|X|x)(?!\d)',
              r'ISBN \1-\2-\3-\4'),  # ISBN-10
             # missing space before ISBN-10 or before ISBN-13,
-            # or non-breaking space.
-            (r'ISBN(|&nbsp;| )((\d(-?)){12}\d|(\d(-?)){9}[\dXx])', r'ISBN \2'),
+            # or multiple spaces or non-breaking space.
+            (r'ISBN(?: *|&nbsp;)((\d(-?)){12}\d|(\d(-?)){9}[\dXx])',
+             r'ISBN \1'),
+            # remove <nowiki /> tags
+            (r'<nowiki>ISBN:? *(?:&nbsp;|&#160;)? *([0-9\-xX]+)</nowiki>',
+             r'ISBN \1'),
         ],
         'exceptions': {
             'inside-tags': [
@@ -403,128 +418,156 @@ fixes = {
                 'hyperlink',
             ],
             'inside': [
-                r'ISBN (\d(-?)){12}\d',     # matches valid ISBN-13s
-                r'ISBN (\d(-?)){9}[\dXx]',  # matches valid ISBN-10s
+                r'ISBN (97[89]-?)(\d-?){9}\d',  # matches valid ISBN-13s
+                r'ISBN (\d-?){9}[\dXx]',  # matches valid ISBN-10s
             ],
         }
     },
 
-    # Corrections for Arabic Wikipedia and any Arabic wiki.
-    #   python replace.py -fix:correct-ar -start:! -always
+    # Typo corrections for Arabic Wikipedia and any Arabic wiki.
+    # python pwb.py replace -fix:correct-ar -start:! -always
 
     'correct-ar': {
-        'regex': True,
+        'regex': False,
         'msg': {
-            'ar': u'تدقيق إملائي',
+            'ar': 'بوت: تدقيق إملائي',
         },
         'replacements': [
-            # FIXME: Do not replace comma in non-Arabic text,
-            # interwiki, image links or <math> syntax.
-            #   (u' ,', u' ،'),
-            # TODO: Basic explanation in English what it does
-            (r'\bإمرأة\b', 'امرأة'),
-            (r'\bالى\b', 'إلى'),
-            (r'\bإسم\b', 'اسم'),
-            (r'\bالأن\b', 'الآن'),
-            (r'\bالة\b', 'آلة'),
-            (r'\bفى\b', 'في'),
-            (r'\bإبن\b', 'ابن'),
-            (r'\bإبنة\b', 'ابنة'),
-            (r'\bإقتصاد\b', 'اقتصاد'),
-            (r'\bإجتماع\b', 'اجتماع'),
-            (r'\bانجيل\b', 'إنجيل'),
-            (r'\bاجماع\b', 'إجماع'),
-            (r'\bاكتوبر\b', 'أكتوبر'),
-            (r'\bإستخراج\b', 'استخراج'),
-            (r'\bإستعمال\b', 'استعمال'),
-            (r'\bإستبدال\b', 'استبدال'),
-            (r'\bإشتراك\b', 'اشتراك'),
-            (r'\bإستعادة\b', 'استعادة'),
-            (r'\bإستقلال\b', 'استقلال'),
-            (r'\bإنتقال\b', 'انتقال'),
-            (r'\bإتحاد\b', 'اتحاد'),
-            (r'\bاملاء\b', 'إملاء'),
-            (r'\bإستخدام\b', 'استخدام'),
-            (r'\bأحدى\b', 'إحدى'),
-            (r'\bلاكن\b', 'لكن'),
-            (r'\bإثنان\b', 'اثنان'),
-            (r'\bإحتياط\b', 'احتياط'),
-            (r'\bإقتباس\b', 'اقتباس'),
-            (r'\bادارة\b', 'إدارة'),
-            (r'\bابناء\b', 'أبناء'),
-            (r'\bالانصار\b', 'الأنصار'),
-            (r'\bاشارة\b', 'إشارة'),
-            (r'\bإقرأ\b', 'اقرأ'),
-            (r'\bإمتياز\b', 'امتياز'),
-            (r'\bارق\b', 'أرق'),
-            (r'\bاللة\b', 'الله'),
-            (r'\bإختبار\b', 'اختبار'),
-            (r'== ?روابط خارجية ?==', '== وصلات خارجية =='),
-            (r'\bارسال\b', 'إرسال'),
-            (r'\bإتصالات\b', 'اتصالات'),
-            (r'\bابو\b', 'أبو'),
-            (r'\bابا\b', 'أبا'),
-            (r'\bاخو\b', 'أخو'),
-            (r'\bاخا\b', 'أخا'),
-            (r'\bاخي\b', 'أخي'),
-            (r'\bاحد\b', 'أحد'),
-            (r'\bاربعاء\b', 'أربعاء'),
-            (r'\bاول\b', 'أول'),
-            (r'\b(ال|)اهم\b', r'\1أهم'),
-            (r'\b(ال|)اثقل\b', r'\1أثقل'),
-            (r'\b(ال|)امجد\b', r'\1أمجد'),
-            (r'\b(ال|)اوسط\b', r'\1أوسط'),
-            (r'\b(ال|)اشقر\b', r'\1أشقر'),
-            (r'\b(ال|)انور\b', r'\1أنور'),
-            (r'\b(ال|)اصعب\b', r'\1أصعب'),
-            (r'\b(ال|)اسهل\b', r'\1أسهل'),
-            (r'\b(ال|)اجمل\b', r'\1أجمل'),
-            (r'\b(ال|)اقبح\b', r'\1أقبح'),
-            (r'\b(ال|)اطول\b', r'\1أطول'),
-            (r'\b(ال|)اقصر\b', r'\1أقصر'),
-            (r'\b(ال|)اسمن\b', r'\1أسمن'),
-            (r'\b(ال|)اذكى\b', r'\1أذكى'),
-            (r'\b(ال|)اكثر\b', r'\1أكثر'),
-            (r'\b(ال|)افضل\b', r'\1أفضل'),
-            (r'\b(ال|)اكبر\b', r'\1أكبر'),
-            (r'\b(ال|)اشهر\b', r'\1أشهر'),
-            (r'\b(ال|)ابطأ\b', r'\1أبطأ'),
-            (r'\b(ال|)اماني\b', r'\1أماني'),
-            (r'\b(ال|)احلام\b', r'\1أحلام'),
-            (r'\b(ال|)اسماء\b', r'\1أسماء'),
-            (r'\b(ال|)اسامة\b', r'\1أسامة'),
-            (r'\bابراهيم\b', 'إبراهيم'),
-            (r'\bاسماعيل\b', 'إسماعيل'),
-            (r'\bايوب\b', 'أيوب'),
-            (r'\bايمن\b', 'أيمن'),
-            (r'\bاوزبكستان\b', 'أوزبكستان'),
-            (r'\bاذربيجان\b', 'أذربيجان'),
-            (r'\bافغانستان\b', 'أفغانستان'),
-            (r'\bانجلترا\b', 'إنجلترا'),
-            (r'\bايطاليا\b', 'إيطاليا'),
-            (r'\bاوربا\b', 'أوروبا'),
-            (r'\bأوربا\b', 'أوروبا'),
-            (r'\bاوغندة\b', 'أوغندة'),
-            (r'\b(ال|)ا(لماني|فريقي|سترالي)(ا|ة|تان|ان|ين|ي|ون|و|ات|)\b',
-             r'\1أ\2\3'),
-            (r'\b(ال|)ا(وروب|مريك)(ا|ي|ية|يتان|يان|يين|يي|يون|يو|يات|)\b',
-             r'\1أ\2\3'),
-            (r'\b(ال|)ا(ردن|رجنتين|وغند|سبان|وكران|فغان)'
-             r'(ي|ية|يتان|يان|يين|يي|يون|يو|يات|)\b',
-             r'\1أ\2\3'),
-            (r'\b(ال|)ا(سرائيل|يران|مارات|نكليز|نجليز)'
-             r'(ي|ية|يتان|يان|يين|يي|يون|يو|يات|)\b',
-             r'\1إ\2\3'),
-            (r'\b(ال|)(ا|أ)(رثوذكس|رثوذوكس)(ي|ية|يتان|يان|يين|يي|يون|يو|يات|)\b',
-             r'\1أرثوذكس\4'),
-            (r'\bإست(عمل|خدم|مر|مد|مال|عاض|قام|حال|جاب|قال|زاد|عان|طال)(ت|ا|وا|)\b',
-             r'است\1\2'),
-            (r'\bإست(حال|قال|طال|زاد|عان|قام|راح|جاب|عاض|مال)ة\b', r'است\1ة'),
+            (' إمرأة ', ' امرأة '),
+            (' الى ', ' إلى '),
+            (' إسم ', ' اسم '),
+            (' الأن ', ' الآن '),
+            (' اول ', ' أول '),
+            (' الة ', ' آلة '),
+            (' فى ', ' في '),
+            (' اثقل ', ' أثقل '),
+            (' إبن ', ' ابن '),
+            (' إبنة ', ' ابنة '),
+            (' إقتصاد ', ' اقتصاد '),
+            (' إجتماع ', ' اجتماع '),
+            (' انجيل ', ' إنجيل '),
+            (' اجماع ', ' إجماع '),
+            (' امريكا ', ' أمريكا '),
+            (' اوروبا ', ' أوروبا '),
+            (' انجلترا ', ' إنجلترا '),
+            (' اكتوبر ', ' أكتوبر '),
+            (' اسرائيل ', ' إسرائيل '),
+            (' المانيا ', ' ألمانيا '),
+            (' ايطاليا ', ' إيطاليا '),
+            (' ايران ', ' إيران '),
+            (' إستخراج ', ' استخراج '),
+            (' إستعمال ', ' استعمال '),
+            (' إستبدال ', ' استبدال '),
+            (' إشتراك ', ' اشتراك '),
+            (' إستعادة ', ' استعادة '),
+            (' إستقلال ', ' استقلال '),
+            (' إنتقال ', ' انتقال '),
+            (' إتحاد ', ' اتحاد '),
+            (' الإتحاد ', ' الاتحاد '),
+            (' املاء ', ' إملاء '),
+            (' إستخدام ', ' استخدام '),
+            (' أحدى ', ' إحدى '),
+            (' لاكن ', ' لكن '),
+            (' الاردن ', ' الأردن '),
+            (' إثنان ', ' اثنان '),
+            (' شيئ ', ' شيء '),
+            (' إحتياط ', ' احتياط '),
+            (' إقتباس ', ' اقتباس '),
+            (' الامارات ', ' الإمارات '),
+            (' اكثر ', ' أكثر '),
+            (' افضل ', ' أفضل '),
+            (' اكبر ', ' أكبر '),
+            (' اشهر ', ' أشهر '),
+            (' ادارة ', ' إدارة '),
+            (' ابناء ', ' أبناء '),
+            (' الانصار ', '  الأنصار '),
+            (' اشارة ', ' إشارة '),
+            (' إقرأ ', ' اقرأ '),
+            (' إمتياز ', ' امتياز '),
+            (' ارق ', ' أرق '),
+            (' أرثوذوكس ', ' أرثوذكس '),
+            (' الأرثوذوكس ', ' الأرثوذكس '),
+            (' أرثوذوكسية ', ' أرثوذكسية '),
+            (' الأرثوذوكسية ', ' الأرثوذكسية '),
+            (' الأرثوذوكسي ', ' الأرثوذكسي '),
+            (' ارثوذوكس ', ' أرثوذكس '),
+            (' ارثوذوكسي ', ' أرثوذكسي '),
+            (' ارثوذوكسية ', ' أرثوذكسية '),
+            (' الارثوذوكسية ', ' الأرثوذكسية '),
+            (' اللة ', ' الله '),
+            (' إختبار ', ' اختبار '),
+            (' ارسال ', ' إرسال '),
+            (' إتصالات ', ' اتصالات '),
+            (' اسامة ', ' أسامة '),
+            (' ابراهيم ', ' إبراهيم '),
+            (' اسماعيل ', ' إسماعيل '),
+            (' ايوب ', ' أيوب '),
+            (' ايمن ', ' أيمن '),
+            (' ابو ', ' أبو '),
+            (' ابا ', ' أبا '),
+            (' اخو ', ' أخو '),
+            (' اخا ', ' أخا '),
+            (' اخي ', ' أخي '),
+            (' احد ', ' أحد '),
+            (' اربعاء ', ' أربعاء '),
+            (' اهم ', ' أهم '),
+            (' اوزبكستان ', ' أوزبكستان '),
+            (' اذربيجان ', ' أذربيجان '),
+            (' افغانستان ', ' أفغانستان '),
+            (' امجد ', ' أمجد '),
+            (' اوسط ', ' أوسط '),
+            (' اشقر ', ' أشقر '),
+            (' انور ', ' أنور '),
+            (' اصعب ', ' أصعب '),
+            (' اسهل ', ' أسهل '),
+            (' اجمل ', ' أجمل '),
+            (' اقبح ', ' أقبح '),
+            (' اطول ', ' أطول '),
+            (' اقصر ', ' أقصر '),
+            (' اسمن ', ' أسمن '),
+            (' اذكى ', ' أذكى '),
+            (' اماني ', ' أماني '),
+            (' احلام ', ' أحلام '),
+            (' اسماء ', ' أسماء '),
+            (' ابطأ ', ' أبطأ '),
+            (' اوربا ', ' أوروبا '),
+            (' أوربا ', ' أوروبا '),
+            (' امريكي ', ' أمريكي '),
+            (' امريكية ', ' أمريكية '),
+            (' امريكيان ', ' أمريكيان '),
+            (' امريكيتان ', ' أمريكيتان '),
+            (' امريكيون ', ' أمريكيون '),
+            (' امريكيات ', ' أمريكيات '),
+            (' الامريكي ', ' الأمريكي '),
+            (' الامريكية ', ' الأمريكية '),
+            (' الامريكيان ', ' الأمريكيان '),
+            (' الامريكيتان ', ' الأمريكيتان '),
+            (' الامريكيون ', ' الأمريكيون '),
+            (' الامريكيات ', ' الأمريكيات '),
+            (' اوروبي ', ' أوروبي '),
+            (' اوروبية ', ' أوروبية '),
+            (' اوروبيان ', ' أوروبيان '),
+            (' اوروبيتان ', ' أوروبيتان '),
+            (' اوروبيون ', ' أوروبيون '),
+            (' اوروبيات ', ' أوروبيات '),
+            (' الاوروبي ', ' الأوروبي '),
+            (' الاوروبية ', ' الأوروبية '),
+            (' الاوروبيان ', ' الأوروبيان '),
+            (' الاوروبيتان ', ' الأوروبيتان '),
+            (' الاوروبيون ', ' الأوروبيون '),
+            (' الاوروبيات ', ' الأوروبيات '),
+            (' اسرائيلي ', ' إسرائيلي '),
+            (' اسرائيلية ', ' إسرائيلية '),
+            (' اسرائيليان ', ' إسرائيليان '),
+            (' اسرائيليتان ', ' إسرائيليتان '),
         ],
         'exceptions': {
             'inside-tags': [
+                'file',         # because of filenames
+                'gallery',      # because of filenames
+                'header',       # section headers
+                'hyperlink',    # URLs
                 'interwiki',
-                'math',
                 'ref',
             ],
         }
@@ -533,86 +576,91 @@ fixes = {
     'specialpages': {
         'regex': False,
         'msg': {
-            'en': u'Robot: Fixing special page capitalisation',
-            'fa': u'ربات: تصحیح بزرگی و کوچکی حروف صفحه‌های ویژه',
+            'ar': 'روبوت: إصلاح حالة حروف الصفحات الخاصة',
+            'arz': 'روبوت: تصليح حاله الحروف بتاعه الصفحات الخصوصيه',
+            'en': 'Robot: Fixing special page capitalisation',
+            'fa': 'ربات: تصحیح بزرگی و کوچکی حروف صفحه‌های ویژه',
         },
         'replacements': [
-            (u'Special:Allpages',        u'Special:AllPages'),
-            (u'Special:Blockip',         u'Special:BlockIP'),
-            (u'Special:Blankpage',       u'Special:BlankPage'),
-            (u'Special:Filepath',        u'Special:FilePath'),
-            (u'Special:Globalusers',     u'Special:GlobalUsers'),
-            (u'Special:Imagelist',       u'Special:ImageList'),
-            (u'Special:Ipblocklist',     u'Special:IPBlockList'),
-            (u'Special:Listgrouprights', u'Special:ListGroupRights'),
-            (u'Special:Listusers',       u'Special:ListUsers'),
-            (u'Special:Newimages',       u'Special:NewImages'),
-            (u'Special:Prefixindex',     u'Special:PrefixIndex'),
-            (u'Special:Protectedpages',  u'Special:ProtectedPages'),
-            (u'Special:Recentchanges',   u'Special:RecentChanges'),
-            (u'Special:Specialpages',    u'Special:SpecialPages'),
-            (u'Special:Unlockdb',        u'Special:UnlockDB'),
-            (u'Special:Userlogin',       u'Special:UserLogin'),
-            (u'Special:Userlogout',      u'Special:UserLogout'),
-            (u'Special:Whatlinkshere',   u'Special:WhatLinksHere'),
+            ('Special:Allpages',        'Special:AllPages'),
+            ('Special:Blockip',         'Special:BlockIP'),
+            ('Special:Blankpage',       'Special:BlankPage'),
+            ('Special:Filepath',        'Special:FilePath'),
+            ('Special:Globalusers',     'Special:GlobalUsers'),
+            ('Special:Imagelist',       'Special:ImageList'),
+            ('Special:Ipblocklist',     'Special:IPBlockList'),
+            ('Special:Listgrouprights', 'Special:ListGroupRights'),
+            ('Special:Listusers',       'Special:ListUsers'),
+            ('Special:Newimages',       'Special:NewImages'),
+            ('Special:Prefixindex',     'Special:PrefixIndex'),
+            ('Special:Protectedpages',  'Special:ProtectedPages'),
+            ('Special:Recentchanges',   'Special:RecentChanges'),
+            ('Special:Specialpages',    'Special:SpecialPages'),
+            ('Special:Unlockdb',        'Special:UnlockDB'),
+            ('Special:Userlogin',       'Special:UserLogin'),
+            ('Special:Userlogout',      'Special:UserLogout'),
+            ('Special:Whatlinkshere',   'Special:WhatLinksHere'),
         ],
     },
-    # yu top-level domain will soon be disabled,
-    # see http://lists.wikimedia.org/pipermail/wikibots-l/2009-February/000290.html
+    # yu top-level domain will soon be disabled, see
+    # https://lists.wikimedia.org/pipermail/wikibots-l/2009-February/000290.html
     # The following are domains that are often-used.
     'yu-tld': {
         'regex': False,
         'nocase': True,
         'msg': {
-            'de':  u'Bot: Ersetze Links auf .yu-Domains',
-            'en':  u'Robot: Replacing links to .yu domains',
-            'fa':  u'ربات: جایگزینی پیوندها به دامنه‌ها با پسوند yu',
-            'fr':  u'Robot: Correction des liens pointant vers le domaine .yu, qui expire en 2009',
-            'ksh': u'Bot: de ahle .yu-Domains loufe us, dröm ußjetuusch',
+            'ar':  'روبوت: إصلاح الوصلات إلى نطاقات .yu',
+            'arz':  'روبوت: تصليح اللينكات للدومين .yu',
+            'de':  'Bot: Ersetze Links auf .yu-Domains',
+            'en':  'Robot: Replacing links to .yu domains',
+            'fa':  'ربات: جایگزینی پیوندها به دامنه‌ها با پسوند yu',
+            'fr':  ('Robot: Correction des liens pointant vers le domaine '
+                    '.yu, qui expire en 2009'),
+            'ksh': 'Bot: de ahle .yu-Domains loufe us, dröm ußjetuusch',
+            'sr': 'Бот: Исправљање линкова ка .yu домену',
         },
         'replacements': [
-            (u'www.budva.cg.yu',             u'www.budva.rs'),
-            (u'spc.org.yu',                  u'spc.rs'),
-            (u'www.oks.org.yu',              u'www.oks.org.rs'),
-            (u'www.kikinda.org.yu',          u'www.kikinda.rs'),
-            (u'www.ds.org.yu',               u'www.ds.org.rs'),
-            (u'www.nbs.yu',                  u'www.nbs.rs'),
-            (u'www.serbia.sr.gov.yu',        u'www.srbija.gov.rs'),
-            (u'eunet.yu',                    u'eunet.rs'),
-            (u'www.zastava-arms.co.yu',      u'www.zastava-arms.co.rs'),
-            (u'www.airportnis.co.yu',        u'www.airportnis.rs'),
-            # (u'www.danas.co.yu',             u'www.danas.rs'), # Archive links don't seem to work
-            (u'www.belex.co.yu',             u'www.belex.rs'),
-            (u'beograd.org.yu',              u'beograd.rs'),
-            (u'www.vlada.cg.yu',             u'www.vlada.me'),
-            (u'webrzs.statserb.sr.gov.yu',   u'webrzs.stat.gov.rs'),
-            (u'www.statserb.sr.gov.yu',      u'webrzs.stat.gov.rs'),
-            (u'www.rastko.org.yu',           u'www.rastko.org.rs'),
-            (u'www.reprezentacija.co.yu',    u'www.reprezentacija.rs'),
-            (u'www.blic.co.yu',              u'www.blic.co.rs'),
-            (u'www.beograd.org.yu',          u'www.beograd.org.rs'),
-            (u'arhiva.glas-javnosti.co.yu',  u'arhiva.glas-javnosti.rs'),
-            (u'www.srpsko-nasledje.co.yu',   u'www.srpsko-nasledje.co.rs'),
-            (u'www.dnevnik.co.yu',           u'www.dnevnik.rs'),
-            (u'www.srbija.sr.gov.yu',        u'www.srbija.gov.rs'),
-            (u'www.kurir-info.co.yu/Arhiva', u'arhiva.kurir-info.rs/Arhiva'),
-            (u'www.kurir-info.co.yu/arhiva', u'arhiva.kurir-info.rs/arhiva'),
-            (u'www.kurir-info.co.yu',        u'www.kurir-info.rs'),
-            (u'arhiva.kurir-info.co.yu',     u'arhiva.kurir-info.rs'),
-            (u'www.prvaliga.co.yu',          u'www.prvaliga.rs'),
-            (u'www.mitropolija.cg.yu',       u'www.mitropolija.me'),
-            (u'www.spc.yu/sr',               u'www.spc.rs/sr'),
-            (u'www.sk.co.yu',                u'www.sk.co.rs'),
-            (u'www.ekoforum.org.yu',         u'www.ekoforum.org'),
-            (u'www.svevlad.org.yu',          u'www.svevlad.org.rs'),
-            (u'www.posta.co.yu',             u'www.posta.rs'),
-            (u'www.glas-javnosti.co.yu',     u'www.glas-javnosti.rs'),
-            (u'www.fscg.cg.yu',              u'www.fscg.co.me'),
-            (u'ww1.rts.co.yu/euro',          u'ww1.rts.co.rs/euro'),
-            (u'www.rtv.co.yu',               u'www.rtv.rs'),
-            (u'www.politika.co.yu',          u'www.politika.rs'),
-            (u'www.mfa.gov.yu',              u'www.mfa.gov.rs'),
-            (u'www.drzavnauprava.sr.gov.yu', u'www.drzavnauprava.gov.rs'),
+            ('www.budva.cg.yu',             'www.budva.rs'),
+            ('spc.org.yu',                  'spc.rs'),
+            ('www.oks.org.yu',              'www.oks.org.rs'),
+            ('www.kikinda.org.yu',          'www.kikinda.rs'),
+            ('www.ds.org.yu',               'www.ds.org.rs'),
+            ('www.nbs.yu',                  'www.nbs.rs'),
+            ('www.serbia.sr.gov.yu',        'www.srbija.gov.rs'),
+            ('eunet.yu',                    'eunet.rs'),
+            ('www.zastava-arms.co.yu',      'www.zastava-arms.co.rs'),
+            ('www.airportnis.co.yu',        'www.airportnis.rs'),
+            ('www.belex.co.yu',             'www.belex.rs'),
+            ('beograd.org.yu',              'beograd.rs'),
+            ('www.vlada.cg.yu',             'www.vlada.me'),
+            ('webrzs.statserb.sr.gov.yu',   'webrzs.stat.gov.rs'),
+            ('www.statserb.sr.gov.yu',      'webrzs.stat.gov.rs'),
+            ('www.rastko.org.yu',           'www.rastko.org.rs'),
+            ('www.reprezentacija.co.yu',    'www.reprezentacija.rs'),
+            ('www.blic.co.yu',              'www.blic.co.rs'),
+            ('www.beograd.org.yu',          'www.beograd.org.rs'),
+            ('arhiva.glas-javnosti.co.yu',  'arhiva.glas-javnosti.rs'),
+            ('www.srpsko-nasledje.co.yu',   'www.srpsko-nasledje.co.rs'),
+            ('www.dnevnik.co.yu',           'www.dnevnik.rs'),
+            ('www.srbija.sr.gov.yu',        'www.srbija.gov.rs'),
+            ('www.kurir-info.co.yu/Arhiva', 'arhiva.kurir-info.rs/Arhiva'),
+            ('www.kurir-info.co.yu/arhiva', 'arhiva.kurir-info.rs/arhiva'),
+            ('www.kurir-info.co.yu',        'www.kurir-info.rs'),
+            ('arhiva.kurir-info.co.yu',     'arhiva.kurir-info.rs'),
+            ('www.prvaliga.co.yu',          'www.prvaliga.rs'),
+            ('www.mitropolija.cg.yu',       'www.mitropolija.me'),
+            ('www.spc.yu/sr',               'www.spc.rs/sr'),
+            ('www.sk.co.yu',                'www.sk.co.rs'),
+            ('www.ekoforum.org.yu',         'www.ekoforum.org'),
+            ('www.svevlad.org.yu',          'www.svevlad.org.rs'),
+            ('www.posta.co.yu',             'www.posta.rs'),
+            ('www.glas-javnosti.co.yu',     'www.glas-javnosti.rs'),
+            ('www.fscg.cg.yu',              'www.fscg.co.me'),
+            ('ww1.rts.co.yu/euro',          'ww1.rts.co.rs/euro'),
+            ('www.rtv.co.yu',               'www.rtv.rs'),
+            ('www.politika.co.yu',          'www.politika.rs'),
+            ('www.mfa.gov.yu',              'www.mfa.gov.rs'),
+            ('www.drzavnauprava.sr.gov.yu', 'www.drzavnauprava.gov.rs'),
         ],
     },
     # These replacements will convert HTML tag from FCK-editor to wiki syntax.
@@ -627,15 +675,95 @@ fixes = {
             (r'(?i)&nbsp;',                      r' '),
         ],
     },
+    'cite_web_date': {
+        'regex': True,
+        'msg': {
+            'en': 'Fixing date format in Template:Cite_web'
+        },
+        'replacements': [
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=\[\[([A-z]+ [0-9]+)\]\], \[\[([0-9]+)\]\](\||\})', r'\1date=\2, \3\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=([A-z]+) ([0-9])[a-z]*?, ([0-9]+)(\||\})',         r'\1date=\2 0\3, \4\5'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=([A-z]+) ([0-9]{2})[a-z]*?, ([0-9]+)(\||\})',      r'\1date=\2 \3, \4\5'),
+
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=January ([0-9]{2}), ([0-9]+)(\||\})',     r'\1date=\3-01-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=February ([0-9]{2}), ([0-9]+)(\||\})',    r'\1date=\3-02-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=March ([0-9]{2}), ([0-9]+)(\||\})',       r'\1date=\3-03-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=April ([0-9]{2}), ([0-9]+)(\||\})',       r'\1date=\3-04-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=May ([0-9]{2}), ([0-9]+)(\||\})',         r'\1date=\3-05-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=June ([0-9]{2}), ([0-9]+)(\||\})',        r'\1date=\3-06-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=July ([0-9]{2}), ([0-9]+)(\||\})',        r'\1date=\3-07-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=August ([0-9]{2}), ([0-9]+)(\||\})',      r'\1date=\3-08-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=September ([0-9]{2}), ([0-9]+)(\||\})',   r'\1date=\3-09-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=October ([0-9]{2}), ([0-9]+)(\||\})',     r'\1date=\3-10-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=November ([0-9]{2}), ([0-9]+)(\||\})',    r'\1date=\3-11-\2\4'),
+            (r'(\{\{[Cc]ite[ _]web.*?\|)[Dd]ate=December ([0-9]{2}), ([0-9]+)(\||\})',    r'\1date=\3-12-\2\4'),
+        ]
+    },
+    "cartel_market": {
+        "regex": True,
+        "msg": {"en": "Updating TOR appearances"},
+        "replacements": [
+            (r"(\*''\[\[Star Wars: The Old Republic\]\].*\n)", r"\1*''[[Star Wars: The Old Republic: Knights of the Fallen Empire]]''\n"),
+            # (r"(\*''\[\[Star Wars: The Old Republic: Knights of the Eternal)", r"*[[Cartel Market|''Star Wars: The Old Republic'' Cartel Market]]\n\1"),
+        ]
+    },
+    "concept": {
+        "regex": True,
+        "msg": {"en": "Recategorization"},
+        "replacements": [
+            (r"\[\[Category:Images from Star Wars: The Old Republic concept art\]\]\n\[\[Category:Images from Star Wars: The Old Republic: Knights of the Fallen Empire\]\]",
+             r"[[Category:Images from Star Wars: The Old Republic: Knights of the Fallen Empire concept art]]"),
+            (r"\[\[Category:Images from Star Wars: The Old Republic concept art\]\]", r"[[Category:Images from Star Wars: The Old Republic: Shadow of Revan concept art]]")
+        ]
+    },
+    "tor_dates": {
+        "regex": True,
+        "msg": {
+            "en": "Fixing TOR dates"
+        },
+        "replacements": [
+            (r'=\[\[3641 BBY\]\], (.*?)<', r'=c. [[3640 BBY]],<ref name="Time">{{TOR_dates|Voss}}</ref> \1<'),
+            (r'=\[\[3641 BBY\]\]', r'=c. [[3640 BBY]]'),
+            (r'In \[\[3641 BBY\]\]', 'Around [[3640 BBY]]'),
+            (r'in \[\[3641 BBY\]\]', 'around [[3640 BBY]]'),
+            (r'\[\[3641 BBY\]\]', '[[3640 BBY]]')
+        ]
+    },
+    "gender": {
+        "regex": True,
+        "msg": {
+            "en": "Removing deprecated category"
+        },
+        "replacements": [
+            # (r'\|gender=\[\[Gender/Legends\|Hermaphrodite\]\] \{\{C\|([Ff]eminine|[Ff]emale)( persona(lity)?)?\}*', r'|gender=[[Gender/Legends|Female]]'),
+            # (r'\|gender=\[\[Gender/Legends\|Hermaphrodite\]\] \(([Ff]eminine|[Ff]emale)( persona(lity)?)?\)', r'|gender=[[Gender/Legends|Female]]'),
+            # (r'\|gender=\[\[Gender/Legends\|Hermaphrodite\]\] \{\{C\|\[\[Gender/Legends\|([Ff]eminine|[Ff]emale)\]\]( persona(lity)?)?\}*', r'|gender=[[Gender/Legends|Female]]'),
+            # (r'\|gender=\[\[Gender/Legends\|Hermaphrodite\]\] \(\[\[Gender/Legends\|([Ff]eminine|[Ff]emale)\]\]( persona(lity)?)?\)', r'|gender=[[Gender/Legends|Female]]'),
+            # (r'\|gender=\[\[Gender/Legends\|Hermaphrodite\]\]\n', r'|gender=[[Gender/Legends|Female]]\n'),
+            # # (r'\|gender=\[\[(Gender/Legends\|)?Hermaphrodite\]\]\n', r'|gender=\n'),
+            # (r'\|gender=\[\[Hermaphrodite\]\] (\(|\{\{C|)([Ff]eminine|[Ff]emale)( persona(lity)?)?\}*', r'|gender=[[Gender/Legends|Female]]'),
+            # (r'(\[\[Category:Hutts.*?\]\])', r'[[Category:Females]]\n\1'),
+            # (r'\[\[Category:Verpine\]\]', r'[[Category:Females]]\n[[Category:Verpine]]')
+            (r'\n\[\[Category:Images[ _]of[ _]hermaphrodites\]\]', ''),
+            (r'\[\[Category:Images[ _]of[ _]hermaphrodites\]\]\n', ''),
+            (r'\n\[\[Category:Images[ _]of[ _]hermaphrodites\|.*?\]\]', ''),
+            (r'\[\[Category:Images[ _]of[ _]hermaphrodites\|.*?\]\]\n', '')
+        ]
+    }
 }
 
-#
+
+def _load_file(filename):
+    """Load the fixes from the given filename."""
+    if os.path.exists(filename):
+        # load binary, to let compile decode it according to the file header
+        with open(filename, 'rb') as f:
+            exec(compile(f.read(), filename, 'exec'), globals())
+        return True
+
+    return False
+
+
 # Load the user fixes file.
 filename = config.datafilepath('user-fixes.py')
-if os.path.exists(filename):
-    # load binary, to let compile decode it according to the file header
-    with open(filename, 'rb') as f:
-        exec(compile(f.read(), filename, 'exec'))
-    user_fixes_loaded = True
-else:
-    user_fixes_loaded = False
+user_fixes_loaded = _load_file(filename)

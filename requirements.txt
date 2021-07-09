@@ -1,4 +1,4 @@
-# This is a PIP requirements file
+# This is a PIP 6+ requirements file for using Pywikibot and scripts
 #
 # All dependencies can be installed using:
 # $ sudo pip install -r requirements.txt
@@ -6,7 +6,6 @@
 # It is organised so that simple requirements
 # are processed first, and more difficult packages
 # are last.
-# All dependencies other than  httplib2 are optional.
 #
 # It is good practise to install packages using the system
 # package manager if it has a packaged version.  If you are
@@ -18,43 +17,42 @@
 #     or
 # $ awk -F '[#>=]' '{print $1}' requirements.txt | xargs apt-cache search
 
-# mandatory; see README.conversion.txt
-httplib2>=0.9.0
+# mandatory dependencies, others are optional
+requests>=2.20.1, < 2.26.0; python_version < '3.6'
+requests>=2.20.1 ; python_version >= '3.6'
+setuptools>=20.2, !=50.0.0, <50.2.0 ; python_version < '3.6'
+setuptools>=20.2 ; python_version >= '3.6'
+
+# MediaWiki markup parser
+# mwparserfromhell is default, wikitextparser can be used instead
+# mwparserfromhell is still required for commons_information.py and patrol.py
+# wikitextparser>=0.47.5
+mwparserfromhell>=0.5.0
+
+# OAuth support
+# mwoauth 0.2.4 is needed because it supports getting identity information
+# about the user
+mwoauth>=0.2.4,!=0.3.1
 
 # core interwiki_graph.py:
-pydot
+pydot >= 1.2
+
+# cosmetic_changes
+python-stdnum >= 1.16
+
+# GUI
+Pillow >= 8.1.1 ; python_version >= '3.6'
 
 # core pagegenerators
 google >= 1.7
+sseclient >= 0.0.18,!=0.0.23,!=0.0.24
 
-# scripts/script_wui.py:
-crontab
-
-# scipts/replicate_wiki.py
-argparse
-
-# scripts/flickrripper.py
-# On Python 2, flickrapi 1.4.x or 2.x may be used.  Only 2.x works on Python 3.
-# The following automatically selects 2.x on all Python versions, which depends
-# on requests 2.x, which may cause pip to report an error like the following:
-#   pkg_resources.VersionConflict: (requests 1.2.3 (/usr/lib/python2.7/site-packages), Requirement.parse('requests>=2.2.1'))
-# If you see that on Python 2, change this to flickrapi==1.4.5
-# On Python 3, force pip to install requests 2.2.1, or remove flickrapi below.
-Pillow
-flickrapi
-
-# incomplete core component botirc
-irc
-
-# textlib.py
-mwparserfromhell>=0.3.3
-
-# The mysql generator in pagegenerators depends on either oursql or MySQLdb
-# pywikibot prefers oursql
-oursql
-
-# scripts/script_wui.py depends on Lua, which is not available using pip
-# but can be obtained from: https://github.com/bastibe/lunatic-python
+# The mysql generator in pagegenerators depends on PyMySQL
+PyMySQL >= 0.6.7, < 1.0.0 ; python_version < '3.6'
+PyMySQL >= 1.0.0 ; python_version >= '3.6'
 
 # core HTML comparison parser in diff module
 beautifulsoup4
+
+# scripts/weblinkchecker.py
+memento_client>=0.5.1,!=0.6.0

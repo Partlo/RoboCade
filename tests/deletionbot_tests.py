@@ -1,27 +1,24 @@
-# -*- coding: utf-8  -*-
 """Tests for scripts/delete.py."""
 #
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
+import unittest
+from contextlib import suppress
 
 import pywikibot
 import pywikibot.page
-
 from scripts import delete
-
-from tests.aspects import unittest, ScriptMainTestCase
+from tests.aspects import ScriptMainTestCase
+from tests.utils import empty_sites
 
 
 class TestDeletionBotWrite(ScriptMainTestCase):
 
     """Test deletionbot script."""
 
-    family = 'test'
+    family = 'wikipedia'
     code = 'test'
 
     sysop = True
@@ -32,12 +29,12 @@ class TestDeletionBotWrite(ScriptMainTestCase):
         site = self.get_site()
         cat = pywikibot.Category(site, 'Pywikibot Delete Test')
         delete.main('-cat:Pywikibot_Delete_Test', '-always')
-        self.assertEqual(len(list(cat.members())), 0)
+        self.assertEmpty(list(cat.members()))
         delete.main('-page:User:Unicodesnowman/DeleteTest1', '-always',
                     '-undelete', '-summary=pywikibot unit tests')
         delete.main('-page:User:Unicodesnowman/DeleteTest2', '-always',
                     '-undelete', '-summary=pywikibot unit tests')
-        self.assertEqual(len(list(cat.members())), 2)
+        self.assertLength(list(cat.members()), 2)
 
     def test_undelete_existing(self):
         """Test undeleting an existing page."""
@@ -54,17 +51,15 @@ class TestDeletionBotUser(ScriptMainTestCase):
 
     """Test deletionbot as a user (not sysop)."""
 
-    family = 'test'
+    family = 'wikipedia'
     code = 'test'
 
-    user = True
+    login = True
     write = True
 
     def test_delete_mark(self):
+        """Test marking User:Unicodesnowman/DeleteMark for deletion."""
         site = self.get_site()
-        if site.username(sysop=True):
-            raise unittest.SkipTest('can\'t test mark with sysop account')
-
         p1 = pywikibot.Page(site, 'User:Unicodesnowman/DeleteMark')
         if not p1.exists():
             p1.text = 'foo'
@@ -81,43 +76,52 @@ class TestDeletionBot(ScriptMainTestCase):
 
     """Test deletionbot with patching to make it non-write."""
 
-    family = 'test'
+    family = 'wikipedia'
     code = 'test'
 
     cached = True
+    login = True
 
     delete_args = []
     undelete_args = []
 
     def setUp(self):
+        """Set up unit test."""
         self._original_delete = pywikibot.Page.delete
         self._original_undelete = pywikibot.Page.undelete
         pywikibot.Page.delete = delete_dummy
         pywikibot.Page.undelete = undelete_dummy
-        super(TestDeletionBot, self).setUp()
+        super().setUp()
 
     def tearDown(self):
+        """Tear down unit test."""
         pywikibot.Page.delete = self._original_delete
         pywikibot.Page.undelete = self._original_undelete
-        super(TestDeletionBot, self).tearDown()
+        super().tearDown()
 
     def test_dry(self):
-        delete.main('-page:Main Page', '-always', '-summary:foo')
-        self.assertEqual(self.delete_args, ['[[Main Page]]', 'foo', False, True])
-        delete.main('-page:FoooOoOooO', '-always', '-summary:foo', '-undelete')
-        self.assertEqual(self.undelete_args, ['[[FoooOoOooO]]', 'foo'])
+        """Test dry run of bot."""
+        with empty_sites():
+            delete.main('-page:Main Page', '-always', '-summary:foo')
+            self.assertEqual(self.delete_args,
+                             ['[[Main Page]]', 'foo', False, True, True])
+        with empty_sites():
+            delete.main(
+                '-page:FoooOoOooO', '-always', '-summary:foo', '-undelete')
+            self.assertEqual(self.undelete_args, ['[[FoooOoOooO]]', 'foo'])
 
 
-def delete_dummy(self, reason, prompt, mark):
-    TestDeletionBot.delete_args = [self.title(asLink=True), reason, prompt, mark]
+def delete_dummy(self, reason, prompt, mark, automatic_quit):
+    """Dummy delete method."""
+    TestDeletionBot.delete_args = [self.title(as_link=True), reason, prompt,
+                                   mark, automatic_quit]
 
 
 def undelete_dummy(self, reason):
-    TestDeletionBot.undelete_args = [self.title(asLink=True), reason]
+    """Dummy undelete method."""
+    TestDeletionBot.undelete_args = [self.title(as_link=True), reason]
 
 
-if __name__ == '__main__':
-    try:
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

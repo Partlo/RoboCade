@@ -1,32 +1,30 @@
-# -*- coding: utf-8  -*-
 """API tests which do not interact with a site."""
 #
-# (C) Pywikibot team, 2012-2014
+# (C) Pywikibot team, 2012-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
-import os
 import datetime
 
 import pywikibot
 from pywikibot.data.api import (
     CachedRequest,
     ParamInfo,
-    Request,
     QueryGenerator,
+    Request,
 )
+from pywikibot.exceptions import Error
 from pywikibot.family import Family
-
-from tests import _images_dir
-from tests.utils import DummySiteinfo
+from pywikibot.login import LoginStatus
+from pywikibot.tools import suppress_warnings
+from tests import join_images_path, patch
 from tests.aspects import (
-    unittest, TestCase, DefaultDrySiteTestCase, SiteAttributeTestCase,
+    DefaultDrySiteTestCase,
+    SiteAttributeTestCase,
+    TestCase,
+    unittest,
 )
+from tests.utils import DummySiteinfo
 
 
 class DryCachedRequestTests(SiteAttributeTestCase):
@@ -47,36 +45,91 @@ class DryCachedRequestTests(SiteAttributeTestCase):
     dry = True
 
     def setUp(self):
-        super(DryCachedRequestTests, self).setUp()
-        self.parms = {'site': self.basesite,
-                      'action': 'query',
+        """Initialize the fake requests."""
+        super().setUp()
+        self.parms = {'action': 'query',
                       'meta': 'userinfo'}
-        self.req = CachedRequest(expiry=1, **self.parms)
-        self.expreq = CachedRequest(expiry=0, **self.parms)
-        self.diffreq = CachedRequest(expiry=1, site=self.basesite, action='query', meta='siteinfo')
-        self.diffsite = CachedRequest(expiry=1, site=self.altsite, action='query', meta='userinfo')
+        self.req = CachedRequest(expiry=1, site=self.basesite,
+                                 parameters=self.parms)
+        self.expreq = CachedRequest(expiry=0, site=self.basesite,
+                                    parameters=self.parms)
+        self.diffreq = CachedRequest(
+            expiry=1, site=self.basesite,
+            parameters={'action': 'query', 'meta': 'siteinfo'})
+        self.diffsite = CachedRequest(
+            expiry=1, site=self.altsite,
+            parameters={'action': 'query', 'meta': 'userinfo'})
+        # When using ** the parameters are still unicode
+        with suppress_warnings('Instead of using kwargs ', DeprecationWarning):
+            self.deprecated_explicit = CachedRequest(
+                expiry=1, site=self.basesite, action='query', meta='userinfo')
+            self.deprecated_asterisks = CachedRequest(
+                expiry=1, site=self.basesite, **self.parms)
 
     def test_expiry_formats(self):
-        self.assertEqual(self.req.expiry, CachedRequest(datetime.timedelta(days=1), **self.parms).expiry)
+        """Test using a timedelta as expiry."""
+        self.assertEqual(self.req.expiry,
+                         CachedRequest(datetime.timedelta(days=1),
+                                       site=self.basesite,
+                                       parameters=self.parms).expiry)
 
     def test_expired(self):
-        self.assertFalse(self.req._expired(datetime.datetime.now()))
-        self.assertTrue(self.req._expired(datetime.datetime.now() - datetime.timedelta(days=2)))
+        """Test if the request is expired."""
+        now = datetime.datetime.utcnow()
+        self.assertFalse(self.req._expired(now))
+        self.assertTrue(
+            self.req._expired(now - datetime.timedelta(days=2)),
+            msg='\nreq.expiry: {}, now: {}'.format(self.req.expiry, now))
+
+    def test_parameter_types(self):
+        """Test _uniquedescriptionstr is identical using different ways."""
+        # This test is done as create_file_name and cachefile_path only use
+        # the hashed name which is not very helpful
+        self.assertEqual(self.req._uniquedescriptionstr(),
+                         self.req._uniquedescriptionstr())
+        self.assertEqual(self.req._uniquedescriptionstr(),
+                         self.expreq._uniquedescriptionstr())
+        self.assertEqual(self.req._uniquedescriptionstr(),
+                         self.deprecated_explicit._uniquedescriptionstr())
+        self.assertEqual(self.req._uniquedescriptionstr(),
+                         self.deprecated_asterisks._uniquedescriptionstr())
+        self.assertNotEqual(self.req._uniquedescriptionstr(),
+                            self.diffreq._uniquedescriptionstr())
+        self.assertNotEqual(self.req._uniquedescriptionstr(),
+                            self.diffsite._uniquedescriptionstr())
 
     def test_get_cache_dir(self):
+        """Test that 'apicache' is in the cache dir."""
         retval = self.req._get_cache_dir()
         self.assertIn('apicache', retval)
 
     def test_create_file_name(self):
-        self.assertEqual(self.req._create_file_name(), self.req._create_file_name())
-        self.assertEqual(self.req._create_file_name(), self.expreq._create_file_name())
-        self.assertNotEqual(self.req._create_file_name(), self.diffreq._create_file_name())
+        """Test the file names for the cache."""
+        self.assertEqual(self.req._create_file_name(),
+                         self.req._create_file_name())
+        self.assertEqual(self.req._create_file_name(),
+                         self.expreq._create_file_name())
+        self.assertEqual(self.req._create_file_name(),
+                         self.deprecated_explicit._create_file_name())
+        self.assertEqual(self.req._create_file_name(),
+                         self.deprecated_asterisks._create_file_name())
+        self.assertNotEqual(self.req._create_file_name(),
+                            self.diffreq._create_file_name())
 
     def test_cachefile_path(self):
-        self.assertEqual(self.req._cachefile_path(), self.req._cachefile_path())
-        self.assertEqual(self.req._cachefile_path(), self.expreq._cachefile_path())
-        self.assertNotEqual(self.req._cachefile_path(), self.diffreq._cachefile_path())
-        self.assertNotEqual(self.req._cachefile_path(), self.diffsite._cachefile_path())
+        """Test the file paths for the cache."""
+        self.assertEqual(self.req._cachefile_path(),
+                         self.req._cachefile_path())
+        self.assertEqual(self.req._cachefile_path(),
+                         self.expreq._cachefile_path())
+        self.assertEqual(self.req._cachefile_path(),
+                         self.deprecated_explicit._cachefile_path())
+        self.assertEqual(self.req._cachefile_path(),
+                         self.deprecated_asterisks._cachefile_path())
+        self.assertNotEqual(self.req._cachefile_path(),
+                            self.diffreq._cachefile_path())
+        self.assertNotEqual(self.req._cachefile_path(),
+                            self.diffsite._cachefile_path())
 
 
 class MockCachedRequestKeyTests(TestCase):
@@ -86,6 +139,7 @@ class MockCachedRequestKeyTests(TestCase):
     net = False
 
     def setUp(self):
+        """Create a mock family and site."""
         class MockFamily(Family):
 
             @property
@@ -94,7 +148,7 @@ class MockCachedRequestKeyTests(TestCase):
 
         class MockSite(pywikibot.site.APISite):
 
-            _loginstatus = pywikibot.site.LoginStatus.NOT_ATTEMPTED
+            _loginstatus = LoginStatus.NOT_ATTEMPTED
 
             _namespaces = {2: ['User']}
 
@@ -104,7 +158,7 @@ class MockCachedRequestKeyTests(TestCase):
                 self._siteinfo = DummySiteinfo({'case': 'first-letter'})
 
             def version(self):
-                return '1.13'  # pre 1.14
+                return '1.23'  # lowest supported release
 
             def protocol(self):
                 return 'http'
@@ -126,51 +180,53 @@ class MockCachedRequestKeyTests(TestCase):
                 return self._siteinfo
 
             def __repr__(self):
-                return "MockSite()"
+                return 'MockSite()'
 
             def __getattr__(self, attr):
-                raise Exception("Attribute %r not defined" % attr)
+                raise Exception('Attribute {!r} not defined'.format(attr))
 
         self.mocksite = MockSite()
-        super(MockCachedRequestKeyTests, self).setUp()
+        super().setUp()
 
     def test_cachefile_path_different_users(self):
+        """Test and compare file paths when different usernames are used."""
         req = CachedRequest(expiry=1, site=self.mocksite,
-                            action='query', meta='siteinfo')
+                            parameters={'action': 'query', 'meta': 'siteinfo'})
         anonpath = req._cachefile_path()
 
-        self.mocksite._userinfo = {'name': u'MyUser'}
-        self.mocksite._loginstatus = 0
+        self.mocksite._userinfo = {'name': 'MyUser'}
+        self.mocksite._loginstatus = LoginStatus.AS_USER
         req = CachedRequest(expiry=1, site=self.mocksite,
-                            action='query', meta='siteinfo')
+                            parameters={'action': 'query', 'meta': 'siteinfo'})
         userpath = req._cachefile_path()
 
         self.assertNotEqual(anonpath, userpath)
 
-        self.mocksite._userinfo = {'name': u'MySysop'}
-        self.mocksite._loginstatus = 1
+        self.mocksite._userinfo = {'name': 'MyOtherUser'}
+        self.mocksite._loginstatus = LoginStatus.AS_USER
         req = CachedRequest(expiry=1, site=self.mocksite,
-                            action='query', meta='siteinfo')
-        sysoppath = req._cachefile_path()
+                            parameters={'action': 'query', 'meta': 'siteinfo'})
+        otherpath = req._cachefile_path()
 
-        self.assertNotEqual(anonpath, sysoppath)
-        self.assertNotEqual(userpath, sysoppath)
+        self.assertNotEqual(anonpath, otherpath)
+        self.assertNotEqual(userpath, otherpath)
 
     def test_unicode(self):
-        self.mocksite._userinfo = {'name': u'محمد الفلسطيني'}
-        self.mocksite._loginstatus = 0
+        """Test caching with Unicode content."""
+        self.mocksite._userinfo = {'name': 'محمد الفلسطيني'}
+        self.mocksite._loginstatus = LoginStatus.AS_USER
 
         req = CachedRequest(expiry=1, site=self.mocksite,
-                            action='query', meta='siteinfo')
+                            parameters={'action': 'query', 'meta': 'siteinfo'})
         en_user_path = req._cachefile_path()
 
-        self.mocksite._namespaces = {2: [u'مستخدم']}
+        self.mocksite._namespaces = {2: ['مستخدم']}
 
         req = CachedRequest(expiry=1, site=self.mocksite,
-                            action='query', meta='siteinfo')
+                            parameters={'action': 'query', 'meta': 'siteinfo'})
 
-        expect = (u'MockSite()User(User:محمد الفلسطيني)' +
-                  "[('action', 'query'), ('meta', 'siteinfo')]")
+        expect = ('MockSite()User(User:محمد الفلسطيني)'
+                  + "[('action', 'query'), ('meta', 'siteinfo')]")
 
         self.assertEqual(repr(req._uniquedescriptionstr()), repr(expect))
 
@@ -188,34 +244,39 @@ class DryWriteAssertTests(DefaultDrySiteTestCase):
 
     def test_no_user(self):
         """Test Request object when not a user."""
-        site = self.get_site()
+        self.site._userinfo = {}
+        with self.subTest(userinfo=self.site._userinfo):
+            with self.assertRaisesRegex(
+                    Error,
+                    'API write action attempted without user'):
+                Request(site=self.site, parameters={'action': 'edit'})
 
-        del site._userinfo
-        self.assertRaisesRegex(pywikibot.Error, ' without userinfo',
-                               Request, site=site, action='edit')
-
-        # Explicitly using str as the test expects it to be str (without the
-        # u-prefix) in Python 2 and this module is using unicode_literals
-        site._userinfo = {'name': str('1.2.3.4'), 'groups': []}
-
-        self.assertRaisesRegex(pywikibot.Error, " as IP '1.2.3.4'",
-                               Request, site=site, action='edit')
+        self.site._userinfo = {'name': '1.2.3.4', 'groups': [], 'anon': ''}
+        with self.subTest(userinfo=self.site._userinfo):
+            with self.assertRaisesRegex(
+                    Error,
+                    " as IP '1.2.3.4'"):
+                Request(site=self.site, parameters={'action': 'edit'})
 
     def test_unexpected_user(self):
         """Test Request object when username is not correct."""
-        site = self.get_site()
-        site._userinfo = {'name': 'other_username', 'groups': []}
-        site._username[0] = 'myusername'
-
-        Request(site=site, action='edit')
+        self.site._userinfo = {'name': 'other_username', 'groups': [],
+                               'id': '1'}
+        self.site._username = 'myusername'
+        # Ignore warning: API write action by unexpected username commenced.
+        with patch('pywikibot.warning'):
+            Request(site=self.site, parameters={'action': 'edit'})
+        self.assertNotEqual(self.site.user(), self.site.username())
+        self.assertNotEqual(self.site.userinfo['name'], self.site.username())
+        self.assertFalse(self.site.logged_in())
 
     def test_normal(self):
         """Test Request object when username is correct."""
-        site = self.get_site()
-        site._userinfo = {'name': 'myusername', 'groups': []}
-        site._username[0] = 'myusername'
-
-        Request(site=site, action='edit')
+        self.site._userinfo = {'name': 'myusername', 'groups': [], 'id': '1'}
+        self.site._username = 'myusername'
+        Request(site=self.site, parameters={'action': 'edit'})
+        self.assertEqual(self.site.user(), self.site.username())
+        self.assertTrue(self.site.logged_in())
 
 
 class DryMimeTests(TestCase):
@@ -225,41 +286,25 @@ class DryMimeTests(TestCase):
     net = False
 
     def test_mime_file_payload(self):
-        """Test Request._generate_MIME_part loads binary as binary."""
-        local_filename = os.path.join(_images_dir, 'MP_sounds.png')
+        """Test Request._generate_mime_part loads binary as binary."""
+        local_filename = join_images_path('MP_sounds.png')
         with open(local_filename, 'rb') as f:
             file_content = f.read()
-        submsg = Request._generate_MIME_part(
+        submsg = Request._generate_mime_part(
             'file', file_content, ('image', 'png'),
             {'filename': local_filename})
         self.assertEqual(file_content, submsg.get_payload(decode=True))
 
     def test_mime_file_container(self):
         """Test Request._build_mime_request encodes binary."""
-        local_filename = os.path.join(_images_dir, 'MP_sounds.png')
+        local_filename = join_images_path('MP_sounds.png')
         with open(local_filename, 'rb') as f:
             file_content = f.read()
-        body = Request._build_mime_request({}, {
+        _, body = Request._build_mime_request({}, {
             'file': (file_content, ('image', 'png'),
                      {'filename': local_filename})
-        })[1]
+        })
         self.assertNotEqual(body.find(file_content), -1)
-
-
-class MimeTests(DefaultDrySiteTestCase):
-
-    """Test MIME request handling with a real site."""
-
-    def test_upload_object(self):
-        """Test Request object prepared to upload."""
-        # fake write test needs the config username
-        site = self.get_site()
-        site._username[0] = 'myusername'
-        site._userinfo = {'name': 'myusername', 'groups': []}
-        req = Request(site=site, action="upload",
-                      file='MP_sounds.png', mime=True,
-                      filename=os.path.join(_images_dir, 'MP_sounds.png'))
-        self.assertEqual(req.mime, True)
 
 
 class ParamInfoDictTests(DefaultDrySiteTestCase):
@@ -267,56 +312,56 @@ class ParamInfoDictTests(DefaultDrySiteTestCase):
     """Test extracting data from the ParamInfo."""
 
     prop_info_param_data = {  # data from 1.25
-        "name": "info",
-        "classname": "ApiQueryInfo",
-        "path": "query+info",
-        "group": "prop",
-        "prefix": "in",
-        "parameters": [
+        'name': 'info',
+        'classname': 'ApiQueryInfo',
+        'path': 'query+info',
+        'group': 'prop',
+        'prefix': 'in',
+        'parameters': [
             {
-                "name": "prop",
-                "multi": "",
-                "limit": 500,
-                "lowlimit": 50,
-                "highlimit": 500,
-                "type": [
-                    "protection",
-                    "talkid",
-                    "watched",
-                    "watchers",
-                    "notificationtimestamp",
-                    "subjectid",
-                    "url",
-                    "readable",
-                    "preload",
-                    "displaytitle"
+                'name': 'prop',
+                'multi': '',
+                'limit': 500,
+                'lowlimit': 50,
+                'highlimit': 500,
+                'type': [
+                    'protection',
+                    'talkid',
+                    'watched',
+                    'watchers',
+                    'notificationtimestamp',
+                    'subjectid',
+                    'url',
+                    'readable',
+                    'preload',
+                    'displaytitle'
                 ]
             },
             {
-                "name": "token",
-                "deprecated": "",
-                "multi": "",
-                "limit": 500,
-                "lowlimit": 50,
-                "highlimit": 500,
-                "type": [
-                    "edit",
-                    "delete",
-                    "protect",
-                    "move",
-                    "block",
-                    "unblock",
-                    "email",
-                    "import",
-                    "watch"
+                'name': 'token',
+                'deprecated': '',
+                'multi': '',
+                'limit': 500,
+                'lowlimit': 50,
+                'highlimit': 500,
+                'type': [
+                    'edit',
+                    'delete',
+                    'protect',
+                    'move',
+                    'block',
+                    'unblock',
+                    'email',
+                    'import',
+                    'watch'
                 ]
             },
             {
-                "name": "continue",
-                "type": "string"
+                'name': 'continue',
+                'type': 'string'
             }
         ],
-        "querytype": "prop"
+        'querytype': 'prop'
     }
 
     edit_action_param_data = {
@@ -326,18 +371,17 @@ class ParamInfoDictTests(DefaultDrySiteTestCase):
 
     def setUp(self):
         """Add a real ParamInfo to the DrySite."""
-        super(ParamInfoDictTests, self).setUp()
+        super().setUp()
         site = self.get_site()
         site._paraminfo = ParamInfo(site)
         # Pretend that paraminfo has been loaded
         for mod in site._paraminfo.init_modules:
             site._paraminfo._paraminfo[mod] = {}
-        site._paraminfo._query_modules = ['info']
-        site._paraminfo._action_modules = ['edit']
-        # TODO: remove access of this private member of ParamInfo
-        site._paraminfo._ParamInfo__inited = True
+        site._paraminfo._action_modules = frozenset(['edit'])
+        site._paraminfo._modules = {'query': frozenset(['info'])}
 
     def test_new_format(self):
+        """Test using a dummy formatted in the new modules-only mode."""
         pi = self.get_site()._paraminfo
         # Set it to the new limited set of keys.
         pi.paraminfo_keys = frozenset(['modules'])
@@ -358,6 +402,7 @@ class ParamInfoDictTests(DefaultDrySiteTestCase):
         self.assertIn('info', pi)
 
     def test_old_format(self):
+        """Test using a dummy formatted in the old mode."""
         pi = self.get_site()._paraminfo
         # Reset it to the complete set of possible keys defined in the class
         pi.paraminfo_keys = ParamInfo.paraminfo_keys
@@ -376,6 +421,7 @@ class ParamInfoDictTests(DefaultDrySiteTestCase):
         self.assertIn('info', pi)
 
     def test_attribute(self):
+        """Test using __getitem__."""
         pi = self.get_site()._paraminfo
         # Reset it to the complete set of possible keys defined in the class
         pi.paraminfo_keys = ParamInfo.paraminfo_keys
@@ -392,6 +438,7 @@ class ParamInfoDictTests(DefaultDrySiteTestCase):
         self.assertEqual(pi['info']['prefix'], 'in')
 
     def test_parameter(self):
+        """Test parameter() method."""
         pi = self.get_site()._paraminfo
         # Reset it to the complete set of possible keys defined in the class
         pi.paraminfo_keys = ParamInfo.paraminfo_keys
@@ -420,10 +467,13 @@ class QueryGenTests(DefaultDrySiteTestCase):
 
     def test_query_constructor(self):
         """Test QueryGenerator constructor."""
-        qGen1 = QueryGenerator(site=self.get_site(), action="query", meta="siteinfo")
-        qGen2 = QueryGenerator(site=self.get_site(), meta="siteinfo")
-        self.assertCountEqual(qGen1.request._params.items(), qGen2.request._params.items())
+        q_gen1 = QueryGenerator(
+            site=self.site, parameters={'action': 'query', 'meta': 'siteinfo'})
+        q_gen2 = QueryGenerator(
+            site=self.site, parameters={'meta': 'siteinfo'})
+        self.assertCountEqual(
+            q_gen1.request._params.items(), q_gen2.request._params.items())
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     unittest.main()

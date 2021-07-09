@@ -1,127 +1,207 @@
-# -*- coding: utf-8  -*-
 """Package tests."""
 #
-# (C) Pywikibot team, 2007-2014
+# (C) Pywikibot team, 2007-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+__all__ = (
+    'create_path_func', 'join_cache_path', 'join_data_path',
+    'join_html_data_path', 'join_images_path', 'join_pages_path',
+    'join_root_path', 'join_xml_data_path', 'patch_request', 'unittest_print',
+    'unpatch_request',
+)
 
-__version__ = '$Id$'
-
+import functools
 import os
-import sys
+import unittest
 import warnings
-
-__all__ = ('httplib2', '_cache_dir', 'TestRequest',
-           'patch_request', 'unpatch_request')
+from contextlib import suppress
+from itertools import chain
+from unittest import mock  # noqa: F401
+from unittest.mock import MagicMock, Mock, patch  # noqa: F401
 
 # Verify that the unit tests have a base working environment:
-# - httplib2 is mandatory
-# - future is needed as a fallback for python 2.6,
+# - requests is mandatory
 #   however if unavailable this will fail on use; see pywikibot/tools.py
-# - mwparserfromhell is optional, so is only imported in textlib_tests
-try:
-    import httplib2  # noqa
-except ImportError as e:
-    print("ImportError: %s" % e)
-    sys.exit(1)
+# - mwparserfromhell or wikitextparser is mandatory but the dependency
+#   is checked by textlib already
+import requests  # noqa: F401
 
-if sys.version_info < (2, 7):
-    # Unittest2 is a backport of python 2.7s unittest module to python 2.6
-    import unittest2 as unittest
-else:
-    import unittest
-
-from pywikibot import config
-from pywikibot import i18n
 import pywikibot.data.api
-from pywikibot.data.api import Request as _original_Request
+from pywikibot import config
 from pywikibot.data.api import CachedRequest
+from pywikibot.data.api import Request as _original_Request
+from pywikibot.tools import PYTHON_VERSION
 
-_tests_dir = os.path.split(__file__)[0]
-_cache_dir = os.path.join(_tests_dir, 'apicache')
-_data_dir = os.path.join(_tests_dir, 'data')
-_images_dir = os.path.join(_data_dir, 'images')
+
+_root_dir = os.path.split(os.path.split(__file__)[0])[0]
+
+# common warn() clauses...
+#
+#   WARN_SITE_CODE is from T234147
+#   WARN_SITE_OBJ is from T225594
+
+WARN_SITE_CODE = r'^Site .*:.* instantiated using different code *'
+WARN_SITE_OBJ = 'Site objects have been created before arguments were handled'
+
+
+def join_root_path(*names):
+    """Return a path relative to the root directory."""
+    return os.path.join(_root_dir, *names)
+
+
+def create_path_func(base_func, subpath):
+    """Return a function returning a path relative to the given directory."""
+    func = functools.partial(base_func, subpath)
+    func.path = base_func.path + '/' + subpath
+    func.__doc__ = 'Return a path relative to `{}/`.'.format(func.path)
+    return func
+
+
+join_root_path.path = 'root'
+join_tests_path = create_path_func(join_root_path, 'tests')
+join_cache_path = create_path_func(join_tests_path,
+                                   'apicache-py{}'
+                                   .format(PYTHON_VERSION[0]))
+join_data_path = create_path_func(join_tests_path, 'data')
+join_pages_path = create_path_func(join_tests_path, 'pages')
+
+join_images_path = create_path_func(join_data_path, 'images')
+join_xml_data_path = create_path_func(join_data_path, 'xml')
+join_html_data_path = create_path_func(join_data_path, 'html')
 
 # Find the root directory of the checkout
-_root_dir = os.path.split(_tests_dir)[0]
-_pwb_py = os.path.join(_root_dir, 'pwb.py')
+_pwb_py = join_root_path('pwb.py')
 
-library_test_modules = [
-    'deprecation',
-    'ui',
-    'tests',
+library_test_modules = {
+    'api',
+    'basesite',
+    'bot',
+    'category',
+    'collections',
+    'cosmetic_changes',
     'date',
-    'mediawikiversion',
-    'ipregex',
-    'xmlreader',
-    'textlib',
-    'http',
-    'namespace',
+    'datasite',
+    'deprecation',
+    'diff',
+    'djvu',
     'dry_api',
     'dry_site',
-    'api',
-    'family',
-    'site',
-    'link',
-    'interwiki_link',
-    'page',
-    'category',
-    'file',
+    'echo',
+    'edit',
     'edit_failure',
-    'timestripper',
-    'pagegenerators',
-    'wikidataquery',
-    'weblib',
+    'eventstreams',
+    'family',
+    'file',
+    'fixes',
+    'flow',
+    'flow_edit',
+    'flow_thanks',
+    'http',
     'i18n',
+    'interwiki_graph',
+    'interwiki_link',
+    'interwikimap',
+    'link',
+    'linter',
+    'logentries',
+    'login',
+    'mediawikiversion',
+    'mysql',
+    'namespace',
+    'oauth',
+    'page',
+    'pagegenerators',
+    'paraminfo',
+    'plural',
+    'proofreadpage',
+    'site',
+    'site_decorators',
+    'site_detect',
+    'siteinfo',
+    'sparql',
+    'tests',
+    'textlib',
+    'thanks',
+    'thread',
+    'timestamp',
+    'timestripper',
+    'tk',
+    'token',
+    'tools',
+    'tools_chars',
+    'tools_formatter',
     'ui',
+    'ui_options',
+    'upload',
+    'uploadbot',
+    'user',
     'wikibase',
     'wikibase_edit',
-    'upload',
-]
+    'wikistats',
+    'xmlreader'
+}
 
-script_test_modules = [
-    'pwb',
-    'script',
+script_test_modules = {
+    'add_text',
     'archivebot',
-    'data_ingestion',
-    'deletionbot',
     'cache',
-]
-
-disabled_test_modules = [
-    'tests',  # tests of the tests package
+    'category_bot',
+    'checkimages',
+    'compat2core',
+    'deletionbot',
+    'fixing_redirects',
+    'generate_family_file',
+    'generate_user_files',
+    'interwikidata',
     'l10n',
-]
-if not i18n.messages_available():
-    disabled_test_modules.append('l10n')
+    'patrolbot',
+    'protectbot',
+    'pwb',
+    'redirect_bot',
+    'reflinks',
+    'replacebot',
+    'script',
+    'template_bot',
+    'uploadscript',
+    'weblinkchecker'
+}
+
+disabled_test_modules = {
+    'tests',  # tests of the tests package
+    'l10n',  # pywikibot-i18n repository runs it
+}
 
 disabled_tests = {
     'textlib': [
         'test_interwiki_format',  # example; very slow test
-    ]
+    ],
 }
 
 
 def _unknown_test_modules():
     """List tests which are to be executed."""
-    dir_list = os.listdir(_tests_dir)
-    all_test_list = [name[0:-9] for name in dir_list  # strip '_tests.py'
-                     if name.endswith('_tests.py') and
-                     not name.startswith('_')]   # skip __init__.py and _*
+    dir_list = os.listdir(join_tests_path())
+    all_test_set = {name[0:-9] for name in dir_list  # strip '_tests.py'
+                    if name.endswith('_tests.py')
+                    and not name.startswith('_')}  # skip __init__.py and _*
 
-    unknown_test_modules = [name
-                            for name in all_test_list
-                            if name not in library_test_modules and
-                            name not in script_test_modules]
-
-    return unknown_test_modules
+    return all_test_set - library_test_modules - script_test_modules
 
 
-extra_test_modules = sorted(_unknown_test_modules())
+extra_test_modules = _unknown_test_modules()
 
-test_modules = library_test_modules + extra_test_modules + script_test_modules
+if 'PYWIKIBOT_TEST_MODULES' in os.environ:
+    _enabled_test_modules = os.environ['PYWIKIBOT_TEST_MODULES'].split(',')
+    disabled_test_modules = (library_test_modules
+                             | extra_test_modules
+                             | script_test_modules
+                             - set(_enabled_test_modules))
+
+
+def unittest_print(*args, **kwargs):
+    """Print information in test log."""
+    print(*args, **kwargs)  # noqa: T001
 
 
 def collector(loader=unittest.loader.defaultTestLoader):
@@ -133,22 +213,25 @@ def collector(loader=unittest.loader.defaultTestLoader):
     # cause the loader to fallback to its own
     # discover() ordering of unit tests.
     if disabled_test_modules:
-        print('Disabled test modules (to run: python -m unittest ...):\n  %s'
-              % ', '.join(disabled_test_modules))
+        unittest_print(
+            'Disabled test modules (to run: python -m unittest ...):\n  {}'
+            .format(', '.join(disabled_test_modules)))
 
     if extra_test_modules:
-        print('Extra test modules (run after library, before scripts):\n  %s'
-              % ', '.join(extra_test_modules))
+        unittest_print(
+            'Extra test modules (run after library, before scripts):\n  {}'
+            .format(', '.join(extra_test_modules)))
 
     if disabled_tests:
-        print('Skipping tests (to run: python -m unittest ...):\n  %r'
-              % disabled_tests)
+        unittest_print(
+            'Skipping tests (to run: python -m unittest ...):\n  {!r}'
+            .format(disabled_tests))
 
-    modules = [module
-               for module in (library_test_modules +
-                              extra_test_modules +
-                              script_test_modules)
-               if module not in disabled_test_modules]
+    modules = (module
+               for module in chain(library_test_modules,
+                                   extra_test_modules,
+                                   script_test_modules)
+               if module not in disabled_test_modules)
 
     test_list = []
 
@@ -161,9 +244,9 @@ def collector(loader=unittest.loader.defaultTestLoader):
                 for test_func in cls:
                     if test_func._testMethodName not in disabled_tests[module]:
                         enabled_tests.append(
-                            module_class_name + '.' +
-                            test_func.__class__.__name__ + '.' +
-                            test_func._testMethodName)
+                            module_class_name + '.'
+                            + test_func.__class__.__name__ + '.'
+                            + test_func._testMethodName)
 
             test_list.extend(enabled_tests)
         else:
@@ -182,24 +265,26 @@ def load_tests(loader=unittest.loader.defaultTestLoader,
 
 
 CachedRequest._get_cache_dir = classmethod(
-    lambda cls, *args: cls._make_dir(_cache_dir))
+    lambda cls, *args: cls._make_dir(join_cache_path()))
 
 
 # Travis-CI builds are set to retry twice, which aims to reduce the number
-# of 'red' builds caused by intermittant server problems, while also avoiding
+# of 'red' builds caused by intermittent server problems, while also avoiding
 # the builds taking a long time due to retries.
 # The following allows builds to retry twice, but higher default values are
 # overridden here to restrict retries to only 1, so developer builds fail more
 # frequently in code paths resulting from mishandled server problems.
 if config.max_retries > 2:
     if 'PYWIKIBOT_TEST_QUIET' not in os.environ:
-        print('tests: max_retries reduced from %d to 1' % config.max_retries)
+        unittest_print(
+            'tests: max_retries reduced from {} to 1'
+            .format(config.max_retries))
     config.max_retries = 1
 
-cache_misses = 0
-cache_hits = 0
+# Raise CaptchaError if a test requires solving a captcha
+config.solve_captcha = False
 
-warnings.filterwarnings("always")
+warnings.filterwarnings('always')
 
 
 class TestRequest(CachedRequest):
@@ -207,8 +292,13 @@ class TestRequest(CachedRequest):
     """Add caching to every Request except logins."""
 
     def __init__(self, *args, **kwargs):
-        """Constructor."""
-        super(TestRequest, self).__init__(0, *args, **kwargs)
+        """Initializer."""
+        super().__init__(0, *args, **kwargs)
+
+    @classmethod
+    def create_simple(cls, req_site, **kwargs):
+        """Circumvent CachedRequest implementation."""
+        return cls(site=req_site, parameters=kwargs)
 
     def _expired(self, dt):
         """Never invalidate cached data."""
@@ -216,36 +306,28 @@ class TestRequest(CachedRequest):
 
     def _load_cache(self):
         """Return whether the cache can be used."""
-        if not super(TestRequest, self)._load_cache():
-            global cache_misses
-            cache_misses += 1
+        if not super()._load_cache():
             return False
 
         # tokens need careful management in the cache
-        # and cant be aggressively cached.
+        # and can't be aggressively cached.
         # FIXME: remove once 'badtoken' is reliably handled in api.py
-        if 'intoken' in self._uniquedescriptionstr():
-            self._data = None
-            return False
-
-        if 'lgpassword' in self._uniquedescriptionstr():
-            self._data = None
-            return False
-
-        global cache_hits
-        cache_hits += 1
+        for desc in ('intoken', 'lgpassword'):
+            if desc in self._uniquedescriptionstr():
+                self._data = None
+                return False
 
         return True
 
     def _write_cache(self, data):
         """Write data except login details."""
         if 'intoken' in self._uniquedescriptionstr():
-            return
+            return None
 
         if 'lgpassword' in self._uniquedescriptionstr():
-            return
+            return None
 
-        return super(TestRequest, self)._write_cache(data)
+        return super()._write_cache(data)
 
 
 original_expired = None
@@ -263,3 +345,8 @@ def unpatch_request():
     """Un-patch Request classes with TestRequest."""
     pywikibot.data.api.Request = _original_Request
     pywikibot.data.api.CachedRequest._expired = original_expired
+
+
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
+        unittest.main()

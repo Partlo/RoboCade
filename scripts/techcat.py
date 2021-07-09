@@ -2,13 +2,13 @@ import pywikibot
 from pywikibot import pagegenerators
 import codecs
 import re
-from rc_utilities import split_line
+from scripts.rc_utilities import split_line
 
 
 def main(*args):
     gen_factory = pagegenerators.GeneratorFactory()
     for arg in pywikibot.handleArgs(*args):
-        print arg
+        print(arg)
         gen_factory.handleArg(arg)
         gener = None
         gener = gen_factory.getCombinedGenerator(gener)

@@ -1,22 +1,16 @@
-# -*- coding: utf-8  -*-
 """Test Interwiki Link functionality."""
 #
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
+from contextlib import suppress
 
-__version__ = '$Id$'
-
-from pywikibot import config2 as config
+from pywikibot import config
+from pywikibot.exceptions import InvalidTitleError
 from pywikibot.page import Link
-from pywikibot.exceptions import InvalidTitle
-from tests.aspects import (
-    unittest,
-    AlteredDefaultSiteTestCase as LinkTestCase,
-    TestCase,
-)
+from tests.aspects import AlteredDefaultSiteTestCase as LinkTestCase
+from tests.aspects import TestCase, unittest
 
 
 class TestPartiallyQualifiedLinkDifferentCodeParser(LinkTestCase):
@@ -82,15 +76,14 @@ class TestInterwikiLinksToNonLocalSites(TestCase):
     def test_via_local_non_local(self):
         """Test de:translatewiki:Main Page on English Wikipedia."""
         link = Link('de:translatewiki:Main Page', self.get_site('wp'))
-        self.assertRaisesRegex(
-            InvalidTitle,
-            "de:translatewiki:Main Page links to a non local site i18n:i18n "
-            "via an interwiki link to wikipedia:de",
-            link.parse)
+        with self.assertRaisesRegex(
+                InvalidTitleError,
+                'de:translatewiki:Main Page links to a non local '
+                'site i18n:i18n '
+                'via an interwiki link to wikipedia:de'):
+            link.parse()
 
 
-if __name__ == '__main__':
-    try:
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

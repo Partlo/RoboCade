@@ -1,32 +1,23 @@
 """Module with the Graphviz drawing calls."""
 #
-# (C) Pywikibot team, 2006-2015
+# (C) Pywikibot team, 2006-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
+import itertools
 import threading
+from collections import Counter
+from typing import Optional
+
+import pywikibot
+from pywikibot import config
+from pywikibot.tools import ModuleDeprecationWrapper
+
 
 try:
     import pydot
 except ImportError as e:
     pydot = e
-
-import pywikibot
-
-from pywikibot import config2 as config
-
-# deprecated value
-pydotfound = not isinstance(pydot, ImportError)
-
-
-class GraphImpossible(Exception):
-
-    """Drawing a graph is not possible on your system."""
 
 
 class GraphSavingThread(threading.Thread):
@@ -42,49 +33,43 @@ class GraphSavingThread(threading.Thread):
     mechanism to kill a thread if it takes too long.
     """
 
-    def __init__(self, graph, originPage):
-        """Constructor."""
-        threading.Thread.__init__(self)
+    def __init__(self, graph, origin):
+        """Initializer."""
+        super().__init__()
         self.graph = graph
-        self.originPage = originPage
+        self.origin = origin
 
     def run(self):
         """Write graphs to the data directory."""
-        for format in config.interwiki_graph_formats:
+        for fmt in config.interwiki_graph_formats:
             filename = config.datafilepath(
-                'interwiki-graphs/' + getFilename(self.originPage, format))
-            if self.graph.write(filename, prog='dot', format=format):
-                pywikibot.output(u'Graph saved as %s' % filename)
+                'interwiki-graphs/' + getFilename(self.origin, fmt))
+            if self.graph.write(filename, prog='dot', format=fmt):
+                pywikibot.output('Graph saved as ' + filename)
             else:
-                pywikibot.output(u'Graph could not be saved as %s' % filename)
+                pywikibot.output('Graph could not be saved as ' + filename)
 
 
-class Subject(object):
+class Subject:
 
     """Data about a page with translations on multiple wikis."""
 
     def __init__(self, origin=None):
-        """Constructor.
+        """Initializer.
 
-        @param originPage: the page on the 'origin' wiki
-        @type originPage: Page
+        :param origin: the page on the 'origin' wiki
+        :type origin: pywikibot.page.Page
         """
         # Remember the "origin page"
         self._origin = origin
 
-        # Temporary variable to support git blame; do not use
-        originPage = origin
-
-        self.found_in = None
-
-        # foundIn is a dictionary where pages are keys and lists of
+        # found_in is a dictionary where pages are keys and lists of
         # pages are values. It stores where we found each page.
         # As we haven't yet found a page that links to the origin page, we
         # start with an empty list for it.
-        if originPage:
-            self.foundIn = {self.originPage: []}
-        else:
-            self.foundIn = {}
+        self.found_in = {}
+        if origin:
+            self.found_in = {origin: []}
 
     @property
     def origin(self):
@@ -93,39 +78,7 @@ class Subject(object):
 
     @origin.setter
     def origin(self, value):
-        """Page on the origin wiki."""
         self._origin = value
-
-    @property
-    def originPage(self):
-        """Deprecated property for the origin page.
-
-        DEPRECATED.  Use origin.
-        """
-        # TODO: deprecate this property
-        return self.origin
-
-    @originPage.setter
-    def originPage(self, value):
-        """Deprecated property for the origin page.
-
-        DEPRECATED.  Use origin.
-        """
-        self.origin = value
-
-    @property
-    def foundIn(self):
-        """Mapping of pages to others pages interwiki linked to it.
-
-        DEPRECATED.  Use found_in.
-        """
-        # TODO: deprecate this property
-        return self.found_in
-
-    @foundIn.setter
-    def foundIn(self, value):
-        """Temporary property setter to support code migration."""
-        self.found_in = value
 
 
 class GraphDrawer:
@@ -133,28 +86,40 @@ class GraphDrawer:
     """Graphviz (dot) code creator."""
 
     def __init__(self, subject):
-        """Constructor.
+        """Initializer.
 
-        @param subject: page data to graph
-        @type subject: Subject
+        :param subject: page data to graph
+        :type subject: pywikibot.interwiki_graph.Subject
 
-        @raises GraphImpossible: pydot is not installed
+        :raises ImportError if pydot is not installed
         """
         if isinstance(pydot, ImportError):
-            raise GraphImpossible('pydot is not installed: %s.' % pydot)
+            raise ImportError('pydot is not installed: {}.'.format(pydot))
         self.graph = None
         self.subject = subject
 
     def getLabel(self, page):
         """Get label for page."""
-        return '"%s:%s"' % (page.site.language(), page.title())
+        return '"{}:{}"'.format(page.site.code, page.title())
+
+    def _octagon_site_set(self):
+        """Build a list of sites with more than one valid page."""
+        page_list = self.subject.found_in.keys()
+
+        # Only track sites of normal pages
+        each_site = (page.site for page in page_list
+                     if page.exists() and not page.isRedirectPage())
+
+        return {x[0] for x in itertools.takewhile(
+            lambda x: x[1] > 1,
+            Counter(each_site).most_common())}
 
     def addNode(self, page):
         """Add a node for page."""
         node = pydot.Node(self.getLabel(page), shape='rectangle')
-        node.set_URL("\"http://%s%s\""
-                     % (page.site.hostname(),
-                        page.site.get_address(page.urlname())))
+        node.set_URL('"http://{}{}"'
+                     .format(page.site.hostname(),
+                             page.site.get_address(page.title(as_url=True))))
         node.set_style('filled')
         node.set_fillcolor('white')
         node.set_fontsize('11')
@@ -164,14 +129,10 @@ class GraphDrawer:
             node.set_fillcolor('blue')
         elif page.isDisambig():
             node.set_fillcolor('orange')
-        if page.namespace() != self.subject.originPage.namespace():
+        if page.namespace() != self.subject.origin.namespace():
             node.set_color('green')
             node.set_style('filled,bold')
-        # if we found more than one valid page for this language:
-        # TODO: Only iterate through at most 2 elements
-        if len([p for p in self.subject.foundIn.keys()
-                if p.site == page.site and p.exists() and
-                not p.isRedirectPage()]) > 1:          # noqa
+        if page.site in self.octagon_sites:
             # mark conflict by octagonal node
             node.set_shape('octagon')
         self.graph.add_node(node)
@@ -186,16 +147,15 @@ class GraphDrawer:
 
             oppositeEdge = self.graph.get_edge(targetLabel, sourceLabel)
             if oppositeEdge:
-                if isinstance(oppositeEdge, list):
-                    # bugfix for pydot >= 1.0.3
-                    oppositeEdge = oppositeEdge[0]
+                oppositeEdge = oppositeEdge[0]
                 oppositeEdge.set_dir('both')
-            # workaround for bug [ 1722739 ]: prevent duplicate edges
+            # workaround for sf.net bug 401: prevent duplicate edges
             # (it is unclear why duplicate edges occur)
+            # https://sourceforge.net/p/pywikipediabot/bugs/401/
             elif self.graph.get_edge(sourceLabel, targetLabel):
-                pywikibot.output(
-                    u'BUG: Tried to create duplicate edge from %s to %s'
-                    % (refPage.title(asLink=True), page.title(asLink=True)))
+                pywikibot.error(
+                    'Tried to create duplicate edge from {} to {}'
+                    .format(refPage, page))
                 # duplicate edges would be bad because then get_edge() would
                 # give a list of edges, not a single edge when we handle the
                 # opposite edge.
@@ -216,47 +176,58 @@ class GraphDrawer:
 
     def saveGraphFile(self):
         """Write graphs to the data directory."""
-        thread = GraphSavingThread(self.graph, self.subject.originPage)
+        thread = GraphSavingThread(self.graph, self.subject.origin)
         thread.start()
 
     def createGraph(self):
         """
         Create graph of the interwiki links.
 
-        For more info see U{http://meta.wikimedia.org/wiki/Interwiki_graphs}
+        For more info see https://meta.wikimedia.org/wiki/Interwiki_graphs
         """
-        pywikibot.output(u'Preparing graph for %s'
-                         % self.subject.originPage.title())
+        pywikibot.output('Preparing graph for {}'
+                         .format(self.subject.origin.title()))
         # create empty graph
         self.graph = pydot.Dot()
         # self.graph.set('concentrate', 'true')
-        for page in self.subject.foundIn.keys():
+
+        self.octagon_sites = self._octagon_site_set()
+
+        for page in self.subject.found_in.keys():
             # a node for each found page
             self.addNode(page)
         # mark start node by pointing there from a black dot.
-        firstLabel = self.getLabel(self.subject.originPage)
+        firstLabel = self.getLabel(self.subject.origin)
         self.graph.add_node(pydot.Node('start', shape='point'))
         self.graph.add_edge(pydot.Edge('start', firstLabel))
-        for page, referrers in self.subject.foundIn.items():
+        for page, referrers in self.subject.found_in.items():
             for refPage in referrers:
                 self.addDirectedEdge(page, refPage)
         self.saveGraphFile()
 
 
-def getFilename(page, extension=None):
+def getFilename(page, extension: Optional[str] = None) -> str:
     """
     Create a filename that is unique for the page.
 
-    @param page: page used to create the new filename
-    @type page: Page
-    @param extension: file extension
-    @type extension: str
-    @return: filename of <family>-<lang>-<page>.<ext>
-    @rtype: str
+    :param page: page used to create the new filename
+    :type page: pywikibot.page.Page
+    :param extension: file extension
+    :return: filename of <family>-<lang>-<page>.<ext>
     """
-    filename = '%s-%s-%s' % (page.site.family.name,
-                             page.site.language(),
-                             page.titleForFilename())
+    filename = '-'.join((page.site.family.name,
+                         page.site.code,
+                         page.title(as_filename=True)))
     if extension:
-        filename += '.%s' % extension
+        filename += '.{}'.format(extension)
     return filename
+
+
+GraphImpossible = ImportError
+
+wrapper = ModuleDeprecationWrapper(__name__)
+wrapper.add_deprecated_attr(
+    'GraphImpossible',
+    replacement_name='ImportError',
+    since='20210423',
+    future_warning=True)

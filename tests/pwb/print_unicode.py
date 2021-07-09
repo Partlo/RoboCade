@@ -1,9 +1,13 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """Script that forms part of pwb_tests."""
-from __future__ import unicode_literals
-
+#
+# (C) Pywikibot team, 2020
+#
+# Distributed under the terms of the MIT license.
+#
 import pywikibot
 
-pywikibot.output('Häuser')
-print('Häuser')
+
+if __name__ == '__main__':
+    pywikibot.output('Häuser')
+    print('Häuser')

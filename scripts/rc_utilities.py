@@ -1,7 +1,7 @@
 import codecs
 import re
 import pywikibot
-from pywikibot import config2 as config
+from pywikibot import config
 
 
 def split_line(counter):
@@ -16,7 +16,7 @@ def split_line(counter):
 def text_file_page_gen(filename, site):
     f = codecs.open(filename, 'r', config.textfile_encoding)
 
-    r = re.compile(ur'\[\[(.+?)(?:\]\]|\|)')
+    r = re.compile(r'\[\[(.+?)(?:\]\]|\|)')
     page_title = None
     for page_title in r.findall(f.read()):
         yield pywikibot.Page(site, page_title)

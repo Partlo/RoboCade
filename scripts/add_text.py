@@ -1,181 +1,233 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 r"""
-This is a Bot to add a text at the end of the content of the page.
+This is a Bot to add text to the top or bottom of a page.
 
-By default it adds the text above categories, interwiki and template
-for the stars of the interwiki.
+By default this adds the text to the bottom above the categories and interwiki.
 
-Alternatively it may also add a text at the top of the page.
 These command line parameters can be used to specify which pages to work on:
 
 &params;
 
 Furthermore, the following command line parameters are supported:
 
--talkpage         Put the text onto the talk page instead the generated on
--talk
-
--text             Define which text to add. "\n" are interpreted as newlines.
+-text             Define what text to add. "\n" are interpreted as newlines.
 
 -textfile         Define a texfile name which contains the text to add
 
 -summary          Define the summary to use
 
--except           Use a regex to check if the text is already in the page
+-up               If used, put the text at the top of the page
+
+-always           If used, the bot won't ask if it should add the specified
+                  text
+
+-talkpage         Put the text onto the talk page instead
+-talk
 
 -excepturl        Use the html page as text where you want to see if there's
                   the text, not the wiki-page.
 
--newimages        Add text in the new images
+-noreorder        Avoid reordering cats and interwiki
 
--always           If used, the bot won't ask if it should add the text
-                  specified
+Example
+-------
 
--up               If used, put the text at the top of the page
+1. Append 'hello world' to the bottom of the sandbox:
 
--noreorder        Avoid to reorder cats and interwiki
+    python pwb.py add_text -page:Wikipedia:Sandbox \
+        -summary:"Bot: pywikibot practice" -text:"hello world"
 
---- Example ---
-1.
-# This is a script to add a template to the top of the pages with
-# category:catname
-# Warning! Put it in one line, otherwise it won't work correctly.
+2. Add a template to the top of the pages with 'category:catname':
 
-python add_text.py -cat:catname -summary:"Bot: Adding a template"
--text:"{{Something}}" -except:"\{\{([Tt]emplate:|)[Ss]omething" -up
+    python pwb.py add_text -cat:catname -summary:"Bot: Adding a template" \
+        -text:"{{Something}}" -except:"\{\{([Tt]emplate:|)[Ss]omething" -up
 
-2.
-# Command used on it.wikipedia to put the template in the page without any
-# category.
-# Warning! Put it in one line, otherwise it won't work correctly.
+3. Command used on it.wikipedia to put the template in the page without any
+   category:
 
-python add_text.py -excepturl:"class='catlinks'>" -uncat
--text:"{{Categorizzare}}" -except:"\{\{([Tt]emplate:|)[Cc]ategorizzare"
--summary:"Bot: Aggiungo template Categorizzare"
-
---- Credits and Help ---
-This script has been written by Botwiki's staff, if you want to help us
-or you need some help regarding this script, you can find us here:
-
-* http://botwiki.sno.cc/wiki/Main_Page
-
+    python pwb.py add_text -except:"\{\{([Tt]emplate:|)[Cc]ategorizzare" \
+        -text:"{{Categorizzare}}" -excepturl:"class='catlinks'>" -uncat \
+        -summary:"Bot: Aggiungo template Categorizzare"
 """
-
 #
-# (C) Filnik, 2007-2010
-# (C) Pywikibot team, 2007-2015
+# (C) Pywikibot team, 2007-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
-import re
 import codecs
-import time
+import collections
+import re
+import sys
+from typing import Optional, Union
 
 import pywikibot
 from pywikibot import config, i18n, pagegenerators, textlib
+from pywikibot.backports import Tuple
+from pywikibot.bot_choice import QuitKeyboardInterrupt
+from pywikibot.exceptions import (
+    EditConflictError,
+    IsRedirectPageError,
+    LockedPageError,
+    NoPageError,
+    PageSaveRelatedError,
+    ServerError,
+    SpamblacklistError,
+)
+from pywikibot.tools.formatter import color_format
 
-docuReplacements = {
-    '&params;': pagegenerators.parameterHelp,
+DEFAULT_ARGS = {
+    'text': None,
+    'text_file': None,
+    'summary': None,
+    'up': False,
+    'always': False,
+    'talk_page': False,
+    'reorder': True,
+    'regex_skip_url': None,
+}
+
+ARG_PROMPT = {
+    '-text': 'What text do you want to add?',
+    '-textfile': 'Which text file do you want to append to the page?',
+    '-summary': 'What summary do you want to use?',
+    '-excepturl': 'What url pattern should we skip?',
 }
 
 
-starsList = [
-    u'bueno',
-    u'bom interwiki',
-    u'cyswllt[ _]erthygl[ _]ddethol', u'dolen[ _]ed',
-    u'destacado', u'destaca[tu]',
-    u'enllaç[ _]ad',
-    u'enllaz[ _]ad',
-    u'leam[ _]vdc',
-    u'legătură[ _]a[bcf]',
-    u'liamm[ _]pub',
-    u'lien[ _]adq',
-    u'lien[ _]ba',
-    u'liên[ _]kết[ _]bài[ _]chất[ _]lượng[ _]tốt',
-    u'liên[ _]kết[ _]chọn[ _]lọc',
-    u'ligam[ _]adq',
-    u'ligazón[ _]a[bd]',
-    u'ligoelstara',
-    u'ligoleginda',
-    u'link[ _][afgu]a', u'link[ _]adq', u'link[ _]f[lm]', u'link[ _]km',
-    u'link[ _]sm', u'linkfa',
-    u'na[ _]lotura',
-    u'nasc[ _]ar',
-    u'tengill[ _][úg]g',
-    u'ua',
-    u'yüm yg',
-    u'רא',
-    u'وصلة مقالة جيدة',
-    u'وصلة مقالة مختارة',
-]
+docuReplacements = {'&params;': pagegenerators.parameterHelp}  # noqa: N816
 
 
-def add_text(page, addText, summary=None, regexSkip=None,
-             regexSkipUrl=None, always=False, up=False, putText=True,
-             oldTextGiven=None, reorderEnabled=True, create=False):
+def get_text(page: pywikibot.page.BasePage, old: Optional[str],
+             create: bool) -> str:
+    """
+    Get text on page. If old is not None, return old.
+
+    :param page: The page to get text from
+    :param old: If not None, return this rather than the page's text
+    :param create: Declare that the page will be created if it doesn't exist
+    :return: The page's text or the old parameter if not None
+    """
+    if old is not None:
+        return old
+
+    try:
+        return page.get()
+    except NoPageError:
+        if create:
+            pywikibot.output("{} doesn't exist, creating it!"
+                             .format(page.title()))
+            return ''
+        else:
+            pywikibot.output("{} doesn't exist, skip!".format(page.title()))
+            return None
+    except IsRedirectPageError:
+        pywikibot.output('{} is a redirect, skip!'.format(page.title()))
+        return None
+
+
+def put_text(page: pywikibot.page.BasePage, new: str, summary: str, count: int,
+             asynchronous: bool = False) -> Optional[bool]:
+    """
+    Save the new text.
+
+    :param page: The page to change the text of
+    :param new: The new text for the page
+    :param summary: Summary of the page change
+    :param count: Maximum number of attempts to reach the server
+    :param asynchronous: If True, saves the page asynchronously
+    :return: True if successful, False if unsuccessful, and None if
+        awaiting the server
+    """
+    page.text = new
+    try:
+        page.save(summary=summary, asynchronous=asynchronous,
+                  minor=page.namespace() != 3)
+    except EditConflictError:
+        pywikibot.output('Edit conflict! skip!')
+    except ServerError:
+        if count <= config.max_retries:
+            pywikibot.output('Server Error! Wait..')
+            pywikibot.sleep(config.retry_wait)
+            return None
+        raise ServerError(
+            'Server Error! Maximum retries exceeded')
+    except SpamblacklistError as e:
+        pywikibot.output(
+            'Cannot change {} because of blacklist entry {}'
+            .format(page.title(), e.url))
+    except LockedPageError:
+        pywikibot.output('Skipping {} (locked page)'.format(page.title()))
+    except PageSaveRelatedError as error:
+        pywikibot.output('Error putting page: {}'.format(error.args))
+    else:
+        return True
+    return False
+
+
+def add_text(page: pywikibot.page.BasePage, addText: str,
+             summary: Optional[str] = None,
+             regexSkip: Optional[str] = None,
+             regexSkipUrl: Optional[str] = None,
+             always: bool = False, up: bool = False,
+             putText: bool = True, oldTextGiven: Optional[str] = None,
+             reorderEnabled: bool = True, create: bool = False
+             ) -> Union[Tuple[bool, bool, bool], Tuple[str, str, bool]]:
     """
     Add text to a page.
 
-    @rtype: tuple of (text, newtext, always)
+    :param page: The page to add text to
+    :param addText: Text to add
+    :param summary: Change summary, if None this uses the beginning of addText
+    :param regexSkip: Abort if the text on the page matches this
+    :param regexSkipUrl: Abort if the url matches this
+    :param always: Edit without user confirmation
+    :param up: Append text to the top of the page if True, otherwise the
+        bottom
+    :param putText: Save changes to the page if True, otherwise return
+        (text, newtext, always)
+    :param oldTextGiven: If None fetch page text, else use this text
+    :param reorderEnabled: If True place text above categories and
+        interwiki, else place at page bottom. No effect if up = False.
+    :param create: Create the page if it does not exist
+    :return: (success, success, always) if putText is True, otherwise
+        (text, newtext, always)
     """
     site = page.site
     if not summary:
         summary = i18n.twtranslate(site, 'add_text-adding',
                                    {'adding': addText[:200]})
-
-    # When a page is tagged as "really well written" it has a star in the
-    # interwiki links. This is a list of all the templates used (in regex
-    # format) to make the stars appear.
-
-    errorCount = 0
-
     if putText:
-        pywikibot.output(u'Loading %s...' % page.title())
-    if oldTextGiven is None:
-        try:
-            text = page.get()
-        except pywikibot.NoPage:
-            if create:
-                pywikibot.output(u"%s doesn't exist, creating it!"
-                                 % page.title())
-                text = u''
-            else:
-                pywikibot.output(u"%s doesn't exist, skip!" % page.title())
-                return (False, False, always)
-        except pywikibot.IsRedirectPage:
-            pywikibot.output(u"%s is a redirect, skip!" % page.title())
-            return (False, False, always)
-    else:
-        text = oldTextGiven
+        pywikibot.output('Loading {}...'.format(page.title()))
+
+    text = get_text(page, oldTextGiven, create)
+    if text is None:
+        return (False, False, always)
+
     # Understand if the bot has to skip the page or not
     # In this way you can use both -except and -excepturl
     if regexSkipUrl is not None:
-        url = site.nice_get_address(page.title(asUrl=True))
+        url = page.full_url()
         result = re.findall(regexSkipUrl, site.getUrl(url))
         if result != []:
             pywikibot.output(
-u'''Exception! regex (or word) used with -exceptUrl is in the page. Skip!
-Match was: %s''' % result)
+                'Exception! regex (or word) used with -exceptUrl '
+                'is in the page. Skip!\n'
+                'Match was: {}'.format(result))
             return (False, False, always)
     if regexSkip is not None:
         result = re.findall(regexSkip, text)
         if result != []:
             pywikibot.output(
-u'''Exception! regex (or word) used with -except is in the page. Skip!
-Match was: %s''' % result)
+                'Exception! regex (or word) used with -except '
+                'is in the page. Skip!\n'
+                'Match was: {}'.format(result))
             return (False, False, always)
     # If not up, text put below
     if not up:
         newtext = text
         # Translating the \\n into binary \n
-        addText = addText.replace('\\n', config.line_separator)
-        if (reorderEnabled):
+        addText = addText.replace('\\n', '\n')
+        if reorderEnabled:
             # Getting the categories
             categoriesInside = textlib.getCategoryLinks(newtext, site)
             # Deleting the categories
@@ -186,173 +238,145 @@ Match was: %s''' % result)
             newtext = textlib.removeLanguageLinks(newtext, site)
 
             # Adding the text
-            newtext += u"%s%s" % (config.line_separator, addText)
+            newtext += '\n' + addText
             # Reputting the categories
             newtext = textlib.replaceCategoryLinks(newtext,
                                                    categoriesInside, site,
                                                    True)
-            # Dealing the stars' issue
-            allstars = []
-            starstext = textlib.removeDisabledParts(text)
-            for star in starsList:
-                regex = re.compile('(\{\{(?:template:|)%s\|.*?\}\}[\s]*)'
-                                   % star, re.I)
-                found = regex.findall(starstext)
-                if found != []:
-                    newtext = regex.sub('', newtext)
-                    allstars += found
-            if allstars != []:
-                newtext = newtext.strip() + config.line_separator * 2
-                allstars.sort()
-                for element in allstars:
-                    newtext += '%s%s' % (element.strip(), config.LS)
             # Adding the interwiki
             newtext = textlib.replaceLanguageLinks(newtext, interwikiInside,
                                                    site)
         else:
-            newtext += u"%s%s" % (config.line_separator, addText)
+            newtext += '\n' + addText
     else:
-        newtext = addText + config.line_separator + text
-    if putText and text != newtext:
-        pywikibot.output(u"\n\n>>> \03{lightpurple}%s\03{default} <<<"
-                         % page.title())
-        pywikibot.showDiff(text, newtext)
-    # Let's put the changes.
-    while True:
+        newtext = addText + '\n' + text
+
+    if not putText:
         # If someone load it as module, maybe it's not so useful to put the
         # text in the page
-        if putText:
-            if not always:
+        return (text, newtext, always)
+
+    if text != newtext:
+        pywikibot.output(color_format(
+            '\n\n>>> {lightpurple}{0}{default} <<<', page.title()))
+        pywikibot.showDiff(text, newtext)
+
+    # Let's put the changes.
+    error_count = 0
+    while True:
+        if not always:
+            try:
                 choice = pywikibot.input_choice(
-                    u'Do you want to accept these changes?',
+                    'Do you want to accept these changes?',
                     [('Yes', 'y'), ('No', 'n'), ('All', 'a'),
-                     ('open in Browser', 'b')], 'n', automatic_quit=False)
-                if choice == 'a':
-                    always = True
-                elif choice == 'n':
-                    return (False, False, always)
-                elif choice == 'b':
-                    pywikibot.bot.open_webbrowser(page)
-            if always or choice == 'y':
-                try:
-                    if always:
-                        page.put(newtext, summary,
-                                 minorEdit=page.namespace() != 3)
-                    else:
-                        page.put_async(newtext, summary,
-                                       minorEdit=page.namespace() != 3)
-                except pywikibot.EditConflict:
-                    pywikibot.output(u'Edit conflict! skip!')
-                    return (False, False, always)
-                except pywikibot.ServerError:
-                    errorCount += 1
-                    if errorCount < config.max_retries:
-                        pywikibot.output(u'Server Error! Wait..')
-                        time.sleep(config.retry_wait)
-                        continue
-                    else:
-                        raise pywikibot.ServerError(u'Fifth Server Error!')
-                except pywikibot.SpamfilterError as e:
-                    pywikibot.output(
-                        u'Cannot change %s because of blacklist entry %s'
-                        % (page.title(), e.url))
-                    return (False, False, always)
-                except pywikibot.LockedPage:
-                    pywikibot.output(u'Skipping %s (locked page)'
-                                     % page.title())
-                    return (False, False, always)
-                except pywikibot.PageNotSaved as error:
-                    pywikibot.output(u'Error putting page: %s' % error.args)
-                    return (False, False, always)
-                else:
-                    # Break only if the errors are one after the other...
-                    errorCount = 0
-                    return (True, True, always)
-        else:
-            return (text, newtext, always)
+                     ('open in Browser', 'b')], 'n')
+            except QuitKeyboardInterrupt:
+                sys.exit('User quit bot run.')
+
+            if choice == 'a':
+                always = True
+            elif choice == 'n':
+                return (False, False, always)
+            elif choice == 'b':
+                pywikibot.bot.open_webbrowser(page)
+                continue
+
+        # either always or choice == 'y' is selected
+        result = put_text(page, newtext, summary, error_count,
+                          asynchronous=not always)
+        if result is not None:
+            return (result, result, always)
+        error_count += 1
 
 
-def main(*args):
+def main(*argv: Tuple[str, ...]) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param argv: Command line arguments
     """
-    # If none, the var is setted only for check purpose.
-    summary = None
-    addText = None
-    regexSkip = None
-    regexSkipUrl = None
-    always = False
-    textfile = None
-    talkPage = False
-    reorderEnabled = True
+    generator_factory = pagegenerators.GeneratorFactory()
 
-    # Put the text above or below the text?
-    up = False
-
-    # Process global args and prepare generator args parser
-    local_args = pywikibot.handle_args(args)
-    genFactory = pagegenerators.GeneratorFactory()
-
-    # Loading the arguments
-    for arg in local_args:
-        if arg.startswith('-textfile'):
-            if len(arg) == 9:
-                textfile = pywikibot.input(
-                    u'Which textfile do you want to add?')
-            else:
-                textfile = arg[10:]
-        elif arg.startswith('-text'):
-            if len(arg) == 5:
-                addText = pywikibot.input(u'What text do you want to add?')
-            else:
-                addText = arg[6:]
-        elif arg.startswith('-summary'):
-            if len(arg) == 8:
-                summary = pywikibot.input(u'What summary do you want to use?')
-            else:
-                summary = arg[9:]
-        elif arg.startswith('-excepturl'):
-            if len(arg) == 10:
-                regexSkipUrl = pywikibot.input(u'What text should I skip?')
-            else:
-                regexSkipUrl = arg[11:]
-        elif arg.startswith('-except'):
-            if len(arg) == 7:
-                regexSkip = pywikibot.input(u'What text should I skip?')
-            else:
-                regexSkip = arg[8:]
-        elif arg == '-up':
-            up = True
-        elif arg == '-noreorder':
-            reorderEnabled = False
-        elif arg == '-always':
-            always = True
-        elif arg == '-talk' or arg == '-talkpage':
-            talkPage = True
-        else:
-            genFactory.handleArg(arg)
-    if textfile and not addText:
-        with codecs.open(textfile, 'r', config.textfile_encoding) as f:
-            addText = f.read()
-    generator = genFactory.getCombinedGenerator()
-    if not generator:
-        pywikibot.showHelp()
+    try:
+        args = parse(argv, generator_factory)
+    except ValueError as exc:
+        pywikibot.bot.suggest_help(additional_text=str(exc))
         return
-    if not addText:
-        pywikibot.error("The text to add wasn't given.")
+
+    text = args.text
+
+    if args.text_file:
+        with codecs.open(args.text_file, 'r', config.textfile_encoding) as f:
+            text = f.read()
+
+    generator = generator_factory.getCombinedGenerator()
+
+    if pywikibot.bot.suggest_help(missing_generator=not generator):
         return
-    if talkPage:
+
+    if args.talk_page:
         generator = pagegenerators.PageWithTalkPageGenerator(generator, True)
-    for page in generator:
-        (text, newtext, always) = add_text(page, addText, summary, regexSkip,
-                                           regexSkipUrl, always, up, True,
-                                           reorderEnabled=reorderEnabled,
-                                           create=talkPage)
 
-if __name__ == "__main__":
+    for page in generator:
+        add_text(page, text, args.summary,
+                 regexSkipUrl=args.regex_skip_url, always=args.always,
+                 up=args.up, reorderEnabled=args.reorder,
+                 create=args.talk_page)
+
+
+def parse(argv: Tuple[str, ...],
+          generator_factory: pagegenerators.GeneratorFactory
+          ) -> collections.namedtuple:
+    """
+    Parses our arguments and provide a named tuple with their values.
+
+    :param argv: input arguments to be parsed
+    :param generator_factory: factory that will determine the page to edit
+
+    :return: a namedtuple with our parsed arguments
+
+    @raise: ValueError if we receive invalid arguments
+    """
+    args = dict(DEFAULT_ARGS)
+    argv = pywikibot.handle_args(argv)
+    argv = generator_factory.handle_args(argv)
+
+    for arg in argv:
+        option, _, value = arg.partition(':')
+
+        if not value and option in ARG_PROMPT:
+            value = pywikibot.input(ARG_PROMPT[option])
+
+        if option == '-text':
+            args['text'] = value
+        elif option == '-textfile':
+            args['text_file'] = value
+        elif option == '-summary':
+            args['summary'] = value
+        elif option == '-up':
+            args['up'] = True
+        elif option == '-always':
+            args['always'] = True
+        elif option in ('-talk', '-talkpage'):
+            args['talk_page'] = True
+        elif option == '-noreorder':
+            args['reorder'] = False
+        elif option == '-excepturl':
+            args['regex_skip_url'] = value
+        else:
+            raise ValueError("Argument '{}' is unrecognized".format(option))
+
+    if not args['text'] and not args['text_file']:
+        raise ValueError("Either the '-text' or '-textfile' is required")
+
+    if args['text'] and args['text_file']:
+        raise ValueError("'-text' and '-textfile' cannot both be used")
+
+    Args = collections.namedtuple('Args', args.keys())
+    return Args(**args)
+
+
+if __name__ == '__main__':
     main()

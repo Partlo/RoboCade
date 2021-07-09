@@ -1,25 +1,31 @@
-# -*- coding: utf-8 -*-
 """Base for terminal user interfaces."""
 #
-# (C) Pywikibot team, 2003-2015
+# (C) Pywikibot team, 2003-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-
 import getpass
 import logging
-import math
 import re
 import sys
+import threading
+from typing import Any, Optional, Union
 
-from . import transliteration
 import pywikibot
 from pywikibot import config
-from pywikibot.bot import VERBOSE, INFO, STDOUT, INPUT, WARNING
-from pywikibot.tools import deprecated
+from pywikibot.backports import Sequence
+from pywikibot.bot_choice import (
+    ChoiceException,
+    Option,
+    OutputOption,
+    QuitKeyboardInterrupt,
+    StandardOption,
+)
+from pywikibot.logging import INFO, INPUT, STDOUT, VERBOSE, WARNING
+from pywikibot.tools import deprecated_args
+from pywikibot.userinterfaces import transliteration
+from pywikibot.userinterfaces._interface_base import ABUIC
+
 
 transliterator = transliteration.transliterator(config.console_encoding)
 
@@ -43,19 +49,26 @@ colors = [
     'white',
 ]
 
-colorTagR = re.compile('\03{(?P<name>%s)}' % '|'.join(colors))
+_color_pat = '{}|previous'.format('|'.join(colors))
+colorTagR = re.compile('\03{((:?%s);?(:?%s)?)}' % (_color_pat, _color_pat))
 
 
-class UI:
+class UI(ABUIC):
 
-    """Base for terminal user interfaces."""
+    """Base for terminal user interfaces.
+
+    *New in version 6.2:* subclassed from
+    :py:obj:`pywikibot.userinterfaces._interface_base.ABUIC`.
+    """
+
+    split_col_pat = re.compile(r'(\w+);?(\w+)?')
 
     def __init__(self):
         """
         Initialize the UI.
 
-        This caches the std-streams locally so any attempts to monkey-patch the
-        streams later will not work.
+        This caches the std-streams locally so any attempts to
+        monkey-patch the streams later will not work.
         """
         self.stdin = sys.stdin
         self.stdout = sys.stdout
@@ -64,15 +77,12 @@ class UI:
         self.encoding = config.console_encoding
         self.transliteration_target = config.transliteration_target
 
-        self.stderr = sys.stderr
-        self.stdout = sys.stdout
-
     def init_handlers(self, root_logger, default_stream='stderr'):
         """Initialize the handlers for user output.
 
         This method initializes handler(s) for output levels VERBOSE (if
         enabled by config.verbose_output), INFO, STDOUT, WARNING, ERROR,
-        and CRITICAL.  STDOUT writes its output to sys.stdout; all the
+        and CRITICAL. STDOUT writes its output to sys.stdout; all the
         others write theirs to sys.stderr.
 
         """
@@ -82,7 +92,7 @@ class UI:
             default_stream = self.stderr
 
         # default handler for display to terminal
-        default_handler = TerminalHandler(self, strm=default_stream)
+        default_handler = TerminalHandler(self, stream=default_stream)
         if config.verbose_output:
             default_handler.setLevel(VERBOSE)
         else:
@@ -90,53 +100,91 @@ class UI:
         # this handler ignores levels above INPUT
         default_handler.addFilter(MaxLevelFilter(INPUT))
         default_handler.setFormatter(
-            TerminalFormatter(fmt="%(message)s%(newline)s"))
+            logging.Formatter(fmt='%(message)s%(newline)s'))
         root_logger.addHandler(default_handler)
 
         # handler for level STDOUT
-        output_handler = TerminalHandler(self, strm=self.stdout)
+        output_handler = TerminalHandler(self, stream=self.stdout)
         output_handler.setLevel(STDOUT)
         output_handler.addFilter(MaxLevelFilter(STDOUT))
         output_handler.setFormatter(
-            TerminalFormatter(fmt="%(message)s%(newline)s"))
+            logging.Formatter(fmt='%(message)s%(newline)s'))
         root_logger.addHandler(output_handler)
 
         # handler for levels WARNING and higher
-        warning_handler = TerminalHandler(self, strm=self.stderr)
+        warning_handler = TerminalHandler(self, stream=self.stderr)
         warning_handler.setLevel(WARNING)
         warning_handler.setFormatter(
-            TerminalFormatter(fmt="%(levelname)s: %(message)s%(newline)s"))
+            logging.Formatter(fmt='%(levelname)s: %(message)s%(newline)s'))
         root_logger.addHandler(warning_handler)
 
-        warnings_logger = logging.getLogger("py.warnings")
+        warnings_logger = logging.getLogger('py.warnings')
         warnings_logger.addHandler(warning_handler)
 
-    def printNonColorized(self, text, targetStream):
+    def encounter_color(self, color, target_stream):
+        """Handle the next color encountered."""
+        raise NotImplementedError('The {} class does not support '
+                                  'colors.'.format(self.__class__.__name__))
+
+    @classmethod
+    def divide_color(cls, color):
         """
-        Write the text non colorized to the target stream.
+        Split color label in a tuple.
 
-        To each line which contains a color tag a ' ***' is added at the end.
+        Received color is a string like 'fg_color;bg_color' or 'fg_color'.
+        Returned values are (fg_color, bg_color) or (fg_color, None).
+
         """
-        lines = text.split('\n')
-        for i, line in enumerate(lines):
-            if i > 0:
-                line = "\n" + line
-            line, count = colorTagR.subn('', line)
-            if count > 0:
-                line += ' ***'
-            if sys.version_info[0] == 2:
-                line = line.encode(self.encoding, 'replace')
-            targetStream.write(line)
+        return cls.split_col_pat.search(color).groups()
 
-    printColorized = printNonColorized
+    def _write(self, text, target_stream):
+        """Optionally encode and write the text to the target stream."""
+        target_stream.write(text)
 
-    def _print(self, text, targetStream):
-        if config.colorized_output:
-            self.printColorized(text, targetStream)
-        else:
-            self.printNonColorized(text, targetStream)
+    def support_color(self, target_stream):
+        """Return whether the target stream does support colors."""
+        return False
 
-    def output(self, text, toStdout=False, targetStream=None):
+    def _print(self, text, target_stream):
+        """Write the text to the target stream handling the colors."""
+        colorized = (config.colorized_output
+                     and self.support_color(target_stream))
+        colored_line = False
+        # Color tags might be cascaded, e.g. because of transliteration.
+        # Therefore we need this stack.
+        color_stack = ['default']
+        text_parts = colorTagR.split(text) + ['default']
+        # match.split() includes every regex group; for each matched color
+        # fg_col:b_col, fg_col and bg_col are added to the resulting list.
+        len_text_parts = len(text_parts[::4])
+        for index, (text, next_color) in enumerate(zip(text_parts[::4],
+                                                       text_parts[1::4])):
+            current_color = color_stack[-1]
+            if next_color == 'previous':
+                if len(color_stack) > 1:  # keep the last element in the stack
+                    color_stack.pop()
+                next_color = color_stack[-1]
+            else:
+                color_stack.append(next_color)
+
+            if current_color != next_color:
+                colored_line = True
+            if colored_line and not colorized:
+                if '\n' in text:  # Normal end of line
+                    text = text.replace('\n', ' ***\n', 1)
+                    colored_line = False
+                elif index == len_text_parts - 1:  # Or end of text
+                    text += ' ***'
+                    colored_line = False
+
+            # print the text up to the tag.
+            self._write(text, target_stream)
+
+            if current_color != next_color and colorized:
+                # set the new color, but only if they change
+                self.encounter_color(color_stack[-1], target_stream)
+
+    def output(self, text, targetStream=None):
         """
         Output text to a stream.
 
@@ -154,16 +202,17 @@ class UI:
             codecedText = text.encode(self.encoding,
                                       'replace').decode(self.encoding)
             if self.transliteration_target:
-                codecedText = codecedText.encode(self.transliteration_target,
-                                                 'replace').decode(self.transliteration_target)
+                codecedText = codecedText.encode(
+                    self.transliteration_target,
+                    'replace').decode(self.transliteration_target)
             transliteratedText = ''
             # Note: A transliteration replacement might be longer than the
             # original character, e.g. ч is transliterated to ch.
-            prev = "-"
-            for i in range(len(codecedText)):
+            prev = '-'
+            for i, char in enumerate(codecedText):
                 # work on characters that couldn't be encoded, but not on
                 # original question marks.
-                if codecedText[i] == '?' and text[i] != u'?':
+                if char == '?' and text[i] != '?':
                     try:
                         transliterated = transliterator.transliterate(
                             text[i], default='?', prev=prev, next=text[i + 1])
@@ -173,64 +222,61 @@ class UI:
                     # transliteration was successful. The replacement
                     # could consist of multiple letters.
                     # mark the transliterated letters in yellow.
-                    transliteratedText += '\03{lightyellow}%s\03{default}' \
-                                          % transliterated
+                    transliteratedText = ''.join((transliteratedText,
+                                                  '\03{lightyellow}',
+                                                  transliterated,
+                                                  '\03{previous}'))
                     # memorize if we replaced a single letter by multiple
                     # letters.
-                    if len(transliterated) > 0:
+                    if transliterated:
                         prev = transliterated[-1]
                 else:
                     # no need to try to transliterate.
-                    transliteratedText += codecedText[i]
-                    prev = codecedText[i]
+                    transliteratedText += char
+                    prev = char
             text = transliteratedText
 
         if not targetStream:
-            if toStdout:
-                targetStream = self.stdout
-            else:
-                targetStream = self.stderr
+            targetStream = self.stderr
 
         self._print(text, targetStream)
 
     def _raw_input(self):
-        if sys.version_info[0] > 2:
-            return input()
-        else:
-            return raw_input()  # noqa
+        # May be overridden by subclass
+        return input()
 
-    def input(self, question, password=False, default='', force=False):
+    def input(self, question: str, password: bool = False,
+              default: str = '', force: bool = False) -> str:
         """
         Ask the user a question and return the answer.
 
         Works like raw_input(), but returns a unicode string instead of ASCII.
 
         Unlike raw_input, this function automatically adds a colon and space
-        after the question if they are not already present.  Also recognises
+        after the question if they are not already present. Also recognises
         a trailing question mark.
 
-        @param question: The question, without trailing whitespace.
-        @type question: basestring
-        @param password: if True, hides the user's input (for password entry).
-        @type password: bool
-        @param default: The default answer if none was entered. None to require
+        :param question: The question, without trailing whitespace.
+        :param password: if True, hides the user's input (for password entry).
+        :param default: The default answer if none was entered. None to require
             an answer.
-        @type default: basestring
-        @param force: Automatically use the default
-        @type force: bool
-        @rtype: unicode
+        :param force: Automatically use the default
         """
         assert(not password or not default)
-        end_marker = ':'
+
         question = question.strip()
-        if question[-1] == ':':
+        end_marker = question[-1]
+        if end_marker in (':', '?'):
             question = question[:-1]
-        elif question[-1] == '?':
-            question = question[:-1]
-            end_marker = '?'
+        else:
+            end_marker = ':'
+
         if default:
-            question = question + ' (default: %s)' % default
-        question = question + end_marker
+            question += ' (default: {})'.format(default)
+        question += end_marker
+
+        # lock stream output
+        # with self.lock: (T282962)
         if force:
             self.output(question + '\n')
             return default
@@ -241,6 +287,10 @@ class UI:
         while True:
             self.output(question + ' ')
             text = self._input_reraise_cntl_c(password)
+
+            if text is None:
+                continue
+
             if text:
                 return text
 
@@ -258,256 +308,206 @@ class UI:
             else:
                 text = self._raw_input()
         except KeyboardInterrupt:
-            raise pywikibot.QuitKeyboardInterrupt()
-        if sys.version_info[0] == 2:
-            text = text.decode(self.encoding)
+            raise QuitKeyboardInterrupt()
+        except UnicodeDecodeError:
+            return None  # wrong terminal encoding, T258143
         return text
 
-    def input_choice(self, question, options, default=None, return_shortcut=True,
-                     automatic_quit=True, force=False):
+    def input_choice(self, question: str, options, default: str = None,
+                     return_shortcut: bool = True,
+                     automatic_quit: bool = True, force: bool = False):
         """
         Ask the user and returns a value from the options.
 
-        @param question: The question, without trailing whitespace.
-        @type question: basestring
-        @param options: All available options. Each entry contains the full
-            length answer and a shortcut of only one character. The shortcut
-            must not appear in the answer.
-        @type options: iterable containing iterables of length 2
-        @param default: The default answer if no was entered. None to require
+        Depending on the options setting return_shortcut to False may not be
+        sensible when the option supports multiple values as it'll return an
+        ambiguous index.
+
+        :param question: The question, without trailing whitespace.
+        :param options: Iterable of all available options. Each entry contains
+            the full length answer and a shortcut of only one character.
+            Alternatively they may be Option (or subclass) instances or
+            ChoiceException instances which have a full option and shortcut
+            and will be raised if selected.
+        :type options: iterable containing sequences of length 2 or
+            iterable containing Option instances or ChoiceException as well.
+            Singletons of Option and its subclasses are also accepted.
+        :param default: The default answer if no was entered. None to require
             an answer.
-        @type default: basestring
-        @param return_shortcut: Whether the shortcut or the index in the option
+        :param return_shortcut: Whether the shortcut or the index in the option
             should be returned.
-        @type return_shortcut: bool
-        @param automatic_quit: Adds the option 'Quit' ('q') and throw a
-            L{QuitKeyboardInterrupt} if selected. If it's an integer it
-            doesn't add the option but throw the exception when the option was
-            selected.
-        @type automatic_quit: bool or int
-        @param force: Automatically use the default
-        @type force: bool
-        @return: If return_shortcut the shortcut of options or the value of
+        :param automatic_quit: Adds the option 'Quit' ('q') if True and throws
+            a :py:obj:`QuitKeyboardInterrupt` if selected.
+        :param force: Automatically use the default
+        :return: If return_shortcut the shortcut of options or the value of
             default (if it's not None). Otherwise the index of the answer in
             options. If default is not a shortcut, it'll return -1.
-        @rtype: int (if not return_shortcut), lowercased basestring (otherwise)
+        :rtype: int (if not return_shortcut), lowercased str (otherwise)
         """
-        options = list(options)
-        if len(options) == 0:
-            raise ValueError(u'No options are given.')
-        if automatic_quit is True:
-            options += [('Quit', 'q')]
-            quit_index = len(options) - 1
-        elif automatic_quit is not False:
-            quit_index = automatic_quit
-        else:
-            quit_index = None
+        def output_option(option, before_question):
+            """Print an OutputOption before or after question."""
+            if isinstance(option, OutputOption) \
+               and option.before_question is before_question:
+                self.output(option.out + '\n')
+
+        if force and default is None:
+            raise ValueError('With no default option it cannot be forced')
+        if isinstance(options, Option):
+            options = [options]
+        else:  # make a copy
+            options = list(options)
+        if not options:
+            raise ValueError('No options are given.')
+        if automatic_quit:
+            options += [QuitKeyboardInterrupt()]
         if default:
             default = default.lower()
-        valid = {}
-        default_index = -1
-        formatted_options = []
         for i, option in enumerate(options):
-            if len(option) != 2:
-                raise ValueError(u'Option #{0} does not consist of an option '
-                                 u'and shortcut.'.format(i))
-            option, shortcut = option
-            if option.lower() in valid:
-                raise ValueError(
-                    u'Multiple identical options ({0}).'.format(option))
-            shortcut = shortcut.lower()
-            if shortcut in valid:
-                raise ValueError(
-                    u'Multiple identical shortcuts ({0}).'.format(shortcut))
-            valid[option.lower()] = i
-            valid[shortcut] = i
-            index = option.lower().find(shortcut)
-            if shortcut == default:
-                default_index = i
-                shortcut = shortcut.upper()
-            if index >= 0:
-                option = u'{0}[{1}]{2}'.format(option[:index], shortcut,
-                                               option[index + len(shortcut):])
-            else:
-                option = u'{0} [{1}]'.format(option, shortcut)
-            formatted_options += [option]
-        question = u'{0} ({1})'.format(question, ', '.join(formatted_options))
-        answer = None
-        while answer is None:
+            if not isinstance(option, Option):
+                if len(option) != 2:
+                    raise ValueError('Option #{} does not consist of an '
+                                     'option and shortcut.'.format(i))
+                options[i] = StandardOption(*option)
+            # TODO: Test for uniquity
+
+        handled = False
+
+        # lock stream output
+        # with self.lock: (T282962)
+        while not handled:
+            for option in options:
+                output_option(option, before_question=True)
+            output = Option.formatted(question, options, default)
             if force:
-                self.output(question + '\n')
+                self.output(output + '\n')
+                answer = default
             else:
-                answer = self.input(question)
-            if default and not answer:  # nothing entered
-                answer = default_index
-            else:
-                answer = valid.get(answer.lower(), None)
-        if quit_index == answer:
-            raise pywikibot.QuitKeyboardInterrupt()
-        elif not return_shortcut:
-            return answer
-        elif answer < 0:
-            return default
-        else:
-            return options[answer][1].lower()
+                answer = self.input(output) or default
+            # something entered or default is defined
+            if answer:
+                for index, option in enumerate(options):
+                    if option.handled(answer):
+                        answer = option.result(answer)
+                        output_option(option, before_question=False)
+                        handled = option.stop
+                        break
 
-    @deprecated('input_choice')
-    def inputChoice(self, question, options, hotkeys, default=None):
+        if isinstance(answer, ChoiceException):
+            raise answer
+        if not return_shortcut:
+            return index
+        return answer
+
+    def input_list_choice(self, question: str, answers: Sequence[Any],
+                          default: Union[int, str, None] = None,
+                          force: bool = False) -> Any:
+        """Ask the user to select one entry from a list of entries.
+
+        :param question: The question, without trailing whitespace.
+        :param answers: A sequence of options to be choosen.
+        :param default: The default answer if no was entered. None to require
+            an answer.
+        :param force: Automatically use the default.
+        :return: Return a single Sequence entry.
         """
-        Ask the user a question with a predefined list of acceptable answers.
-
-        DEPRECATED: Use L{input_choice} instead!
-
-        Directly calls L{input_choice} with the options and hotkeys zipped
-        into a tuple list. It always returns the hotkeys and throws no
-        L{QuitKeyboardInterrupt} if quit was selected.
-        """
-        return self.input_choice(question=question, options=zip(options, hotkeys),
-                                 default=default, return_shortcut=True,
-                                 automatic_quit=False)
-
-    def input_list_choice(self, question, answers, default=None, force=False):
-        """Ask the user to select one entry from a list of entries."""
-        message = question
-        clist = answers
-
-        line_template = u"{{0: >{0}}}: {{1}}".format(int(math.log10(len(clist)) + 1))
-        for n, i in enumerate(clist):
-            pywikibot.output(line_template.format(n + 1, i))
+        # lock stream output
+        # with self.lock: (T282962)
+        if not force:
+            line_template = '{{0: >{}}}: {{1}}'.format(len(str(len(answers))))
+            for i, entry in enumerate(answers, start=1):
+                self.output(line_template.format(i, entry))
 
         while True:
-            choice = self.input(message, default=default, force=force)
+            choice = self.input(question, default=default, force=force)
+
             try:
                 choice = int(choice) - 1
-            except ValueError:
-                try:
-                    choice = clist.index(choice)
-                except IndexError:
-                    choice = -1
+            except (TypeError, ValueError):
+                if choice in answers:
+                    return choice
+                choice = -1
 
             # User typed choice number
-            if 0 <= choice < len(clist):
-                return clist[choice]
-            else:
-                pywikibot.error("Invalid response")
+            if 0 <= choice < len(answers):
+                return answers[choice]
 
-    def editText(self, text, jumpIndex=None, highlight=None):
+            if force:
+                raise ValueError('Invalid value "{}" for default during force.'
+                                 .format(default))
+
+            pywikibot.error('Invalid response')
+
+    def editText(self, text: str, jumpIndex: Optional[int] = None,
+                 highlight: Optional[str] = None):
         """Return the text as edited by the user.
 
         Uses a Tkinter edit box because we don't have a console editor
 
-        @param text: the text to be edited
-        @type text: unicode
-        @param jumpIndex: position at which to put the caret
-        @type jumpIndex: int
-        @param highlight: each occurrence of this substring will be highlighted
-        @type highlight: unicode
-        @return: the modified text, or None if the user didn't save the text
+        :param text: the text to be edited
+        :param jumpIndex: position at which to put the caret
+        :param highlight: each occurrence of this substring will be highlighted
+        :return: the modified text, or None if the user didn't save the text
             file in his text editor
-        @rtype: unicode or None
+        :rtype: str or None
         """
         try:
             from pywikibot.userinterfaces import gui
         except ImportError as e:
-            print('Could not load GUI modules: %s' % e)
+            pywikibot.warning('Could not load GUI modules: {}'.format(e))
             return text
         editor = gui.EditBoxWindow()
         return editor.edit(text, jumpIndex=jumpIndex, highlight=highlight)
 
-    def askForCaptcha(self, url):
-        """Show the user a CAPTCHA image and return the answer."""
-        try:
-            import webbrowser
-            pywikibot.output(u'Opening CAPTCHA in your web browser...')
-            if webbrowser.open(url):
-                return pywikibot.input(
-                    u'What is the solution of the CAPTCHA that is shown in '
-                    u'your web browser?')
-            else:
-                raise
-        except:
-            pywikibot.output(u'Error in opening web browser: %s'
-                             % sys.exc_info()[0])
-            pywikibot.output(
-                u'Please copy this url to your web browser and open it:\n %s'
-                % url)
-            return pywikibot.input(
-                u'What is the solution of the CAPTCHA at this url ?')
-
     def argvu(self):
-        """Return the decoded arguments from argv."""
-        try:
-            return [s.decode(self.encoding) for s in self.argv]
-        except AttributeError:  # in python 3, self.argv is unicode and thus cannot be decoded
-            return [s for s in self.argv]
+        """Return copy of argv."""
+        return list(self.argv)
 
 
-class TerminalHandler(logging.Handler):
+class TerminalHandler(logging.StreamHandler):
 
     """A handler class that writes logging records to a terminal.
 
-    This class does not close the stream,
-    as sys.stdout or sys.stderr may be (and usually will be) used.
+    This class does not close the stream, as sys.stdout or sys.stderr
+    may be (and usually will be) used.
 
     Slightly modified version of the StreamHandler class that ships with
     logging module, plus code for colorization of output.
-
     """
 
     # create a class-level lock that can be shared by all instances
-    import threading
     sharedlock = threading.RLock()
 
-    def __init__(self, UI, strm=None):
+    @deprecated_args(strm='stream')
+    def __init__(self, UI, stream=None):
         """Initialize the handler.
 
-        If strm is not specified, sys.stderr is used.
-
+        If stream is not specified, sys.stderr is used.
         """
-        logging.Handler.__init__(self)
-        # replace Handler's instance-specific lock with the shared class lock
-        # to ensure that only one instance of this handler can write to
-        # the console at a time
-        self.lock = TerminalHandler.sharedlock
-        if strm is None:
-            strm = sys.stderr
-        self.stream = strm
-        self.formatter = None
+        super().__init__(stream=stream)
         self.UI = UI
 
-    def flush(self):
-        """Flush the stream."""
-        self.stream.flush()
+    def createLock(self):
+        """Acquire a thread lock for serializing access to the underlying I/O.
+
+        Replace Handler's instance-specific lock with the shared
+        class lock to ensure that only one instance of this handler can
+        write to the console at a time.
+        """
+        self.lock = TerminalHandler.sharedlock
 
     def emit(self, record):
-        """Emit the record formatted to the output and return it."""
+        """Emit the record formatted to the output."""
+        self.flush()
         if record.name == 'py.warnings':
             # Each warning appears twice
             # the second time it has a 'message'
             if 'message' in record.__dict__:
                 return
 
-            # Remove the last line, if it appears to be the warn() call
-            msg = record.args[0]
-            is_useless_source_output = any(
-                s in msg for s in
-                (str('warn('), str('exceptions.'), str('Warning)'), str('Warning,')))
+            record.__dict__.setdefault('newline', '\n')
 
-            if is_useless_source_output:
-                record.args = ('\n'.join(record.args[0].splitlines()[0:-1]),)
-
-            if 'newline' not in record.__dict__:
-                record.__dict__['newline'] = '\n'
-
-        text = self.format(record)
-        return self.UI.output(text, targetStream=self.stream)
-
-
-class TerminalFormatter(logging.Formatter):
-
-    """Terminal logging formatter."""
-
-    pass
+        msg = self.format(record)
+        self.UI.output(msg, targetStream=self.stream)
 
 
 class MaxLevelFilter(logging.Filter):
@@ -520,12 +520,11 @@ class MaxLevelFilter(logging.Filter):
     """
 
     def __init__(self, level=None):
-        """Constructor."""
+        """Initializer."""
         self.level = level
 
     def filter(self, record):
         """Return true if the level is below or equal to the set level."""
         if self.level:
             return record.levelno <= self.level
-        else:
-            return True
+        return True

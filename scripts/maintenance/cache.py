@@ -1,31 +1,51 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 r"""
 This script runs commands on each entry in the API caches.
 
-Syntax: cache.py [-password] [-delete] [-c '...'] [dir ...]
+Syntax:
+
+    python pwb.py cache [-password] [-delete] [-c "..."] [-o "..."] [dir ...]
 
 If no directory are specified, it will detect the API caches.
 
 If no command is specified, it will print the filename of all entries.
 If only -delete is specified, it will delete all entries.
 
-The option '-c' must be followed by a command in python syntax.
+The following parameters are supported:
 
-Example commands:
+-delete           Delete each command filtered. If that option is set the
+                  default output will be nothing.
+
+-c                Filter command in python syntax. It must evaluate to True to
+                  output anything.
+
+-o                Output command which is output when the filter evaluated to
+                  True. If it returns None it won't output anything.
+
+Examples
+--------
+
   Print the filename of any entry with 'wikidata' in the key:
 
-    entry if "wikidata" in entry._uniquedescriptionstr() else None
+    -c "wikidata" in entry._uniquedescriptionstr()
 
   Customised output if the site code is 'ar':
 
-    entry.site.code == "ar" and print("%s" % entry._uniquedescriptionstr())
+    -c entry.site.code == "ar"
+    -o uniquedesc(entry)
 
-  Or the state of the login
-    entry.site._loginstatus == LoginStatus.NOT_ATTEMPTED and \
-print("%s" % entry._uniquedescriptionstr())
+  Or the state of the login:
 
-  These functions can be used as a command:
+    -c entry.site._loginstatus == LoginStatus.NOT_ATTEMPTED
+    -o uniquedesc(entry)
+
+  If the function only uses one parameter for the entry it can be omitted:
+
+    -c has_password
+    -o uniquedesc
+
+Available filter commands:
+
     has_password(entry)
     is_logout(entry)
     empty_response(entry)
@@ -34,28 +54,34 @@ print("%s" % entry._uniquedescriptionstr())
     older_than_one_day(entry)
     recent(entry)
 
-  There are helper functions which can be part of a command:
+There are helper functions which can be part of a command:
+
     older_than(entry, interval)
     newer_than(entry, interval)
+
+Available output commands:
+
+    uniquedesc(entry)
 """
 #
-# (C) Pywikibot team, 2014
+# (C) Pywikibot team, 2014-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import print_function, unicode_literals
-__version__ = '$Id$'
-#
-
-import os
 import datetime
-import pickle
 import hashlib
+import os
+import pickle
+import sys
+
 import pywikibot
 from pywikibot.data import api
 
-from pywikibot.site import APISite, DataSite, LoginStatus  # noqa
-from pywikibot.page import User  # noqa
+# The follow attributes are used by eval()
+from pywikibot.login import LoginStatus  # noqa: F401
+from pywikibot.page import User  # noqa: F401
+from pywikibot.site import APISite, ClosedSite, DataSite  # noqa: F401
+from pywikibot.tools import PYTHON_VERSION
 
 
 class ParseError(Exception):
@@ -68,14 +94,16 @@ class CacheEntry(api.CachedRequest):
     """A Request cache entry."""
 
     def __init__(self, directory, filename):
-        """Constructor."""
+        """Initializer."""
         self.directory = directory
         self.filename = filename
 
     def __str__(self):
+        """Return string equivalent of object."""
         return self.filename
 
     def __repr__(self):
+        """Representation of object."""
         return self._cachefile_path()
 
     def _create_file_name(self):
@@ -87,6 +115,7 @@ class CacheEntry(api.CachedRequest):
         return self.directory
 
     def _cachefile_path(self):
+        """Return cache file path."""
         return os.path.join(self._get_cache_dir(),
                             self._create_file_name())
 
@@ -104,11 +133,12 @@ class CacheEntry(api.CachedRequest):
         end = self.key.index(')')
 
         if not end:
-            raise ParseError('End of Site() keyword not found: %s' % self.key)
+            raise ParseError('End of Site() keyword not found: {}'
+                             .format(self.key))
 
         if 'Site' not in self.key[0:start]:
-            raise ParseError('Site() keyword not found at start of key: %s'
-                             % self.key)
+            raise ParseError('Site() keyword not found at start of key: {}'
+                             .format(self.key))
 
         site = self.key[0:end + 1]
         if site[0:5] == 'Site(':
@@ -131,20 +161,20 @@ class CacheEntry(api.CachedRequest):
 
             end = self.key.index(')', start + 5)
             if not end:
-                raise ParseError('End of User() keyword not found: %s'
-                                 % self.key)
+                raise ParseError('End of User() keyword not found: {}'
+                                 .format(self.key))
             username = self.key[start:end]
         elif self.key[start:start + 12] == 'LoginStatus(':
             end = self.key.index(')', start + 12)
             if not end:
-                raise ParseError('End of LoginStatus() keyword not found: %s'
-                                 % self.key)
+                raise ParseError('End of LoginStatus() keyword not found: {}'
+                                 .format(self.key))
             login_status = self.key[start:end + 1]
         # If the key does not contain User(..) or LoginStatus(..),
         # it must be the old key format which only contains Site and params
         elif self.key[start:start + 3] != "[('":
-            raise ParseError('Keyword after Site not recognised: %s...'
-                             % self.key)
+            raise ParseError('Keyword after Site not recognised: {}...'
+                             .format(self.key))
 
         start = end + 1
 
@@ -163,20 +193,24 @@ class CacheEntry(api.CachedRequest):
             raise ParseError('No Site')
         self.site = eval(site)
         if login_status:
-            self.site._loginstatus = eval('LoginStatus.%s'
-                                          % login_status[12:-1])
+            self.site._loginstatus = eval(login_status)
         if username:
-            self.site._username = [username, username]
+            self.site._username = username
         if not params:
             raise ParseError('No request params')
-        self._params = dict(eval(params))
+        self._params = {}
+        for key, value in eval(params):
+            if isinstance(value, bytes):
+                value = value.decode(self.site.encoding())
+            self._params[key] = value.split('|')
 
     def _delete(self):
         """Delete the cache entry."""
         os.remove(self._cachefile_path())
 
 
-def process_entries(cache_path, func, use_accesstime=None):
+def process_entries(cache_path, func, use_accesstime=None, output_func=None,
+                    action_func=None):
     """
     Check the contents of the cache.
 
@@ -184,20 +218,21 @@ def process_entries(cache_path, func, use_accesstime=None):
     whether cache files are being used.
     However file access times are not always usable.
     On many modern filesystems, they have been disabled.
-    On unix, check the filesystem mount options.  You may
+    On Unix, check the filesystem mount options. You may
     need to remount with 'strictatime'.
 
-    @param use_accesstime: Whether access times should be used.
-    @type use_accesstime: bool tristate:
+    :param use_accesstime: Whether access times should be used.
+    :type use_accesstime: bool tristate:
          - None  = detect
-         - False = dont use
+         - False = don't use
          - True  = always use
     """
     if not cache_path:
-        cache_path = os.path.join(pywikibot.config2.base_dir, 'apicache')
+        cache_path = os.path.join(pywikibot.config.base_dir,
+                                  'apicache-py{0:d}'.format(PYTHON_VERSION[0]))
 
     if not os.path.exists(cache_path):
-        pywikibot.error('%s: no such file or directory' % cache_path)
+        pywikibot.error('{}: no such file or directory'.format(cache_path))
         return
 
     if os.path.isdir(cache_path):
@@ -213,10 +248,26 @@ def process_entries(cache_path, func, use_accesstime=None):
             stinfo = os.stat(filepath)
 
         entry = CacheEntry(cache_dir, filename)
+
+        # Deletion is chosen only, abbreviate this request
+        if func is None and output_func is None \
+           and action_func == CacheEntry._delete:
+            action_func(entry)
+            continue
+
+        # Skip foreign python specific directory
+        _, _, version = cache_path.partition('-')
+        if version and version[-1] != str(PYTHON_VERSION[0]):
+            pywikibot.error(
+                "Skipping {} directory, can't read content with python {}"
+                .format(cache_path, PYTHON_VERSION[0]))
+            continue
+
         try:
             entry._load_cache()
         except ValueError as e:
-            print('Failed loading %s' % entry._cachefile_path())
+            pywikibot.error('Failed loading {}'.format(
+                entry._cachefile_path()))
             pywikibot.exception(e, tb=True)
             continue
 
@@ -232,134 +283,196 @@ def process_entries(cache_path, func, use_accesstime=None):
         try:
             entry.parse_key()
         except ParseError:
-            pywikibot.error(u'Problems parsing %s with key %s'
-                            % (entry.filename, entry.key))
+            pywikibot.error('Problems parsing {} with key {}'
+                            .format(entry.filename, entry.key))
             pywikibot.exception()
             continue
 
         try:
             entry._rebuild()
         except Exception as e:
-            pywikibot.error(u'Problems loading %s with key %s, %r'
-                            % (entry.filename, entry.key, entry._parsed_key))
+            pywikibot.error('Problems loading {} with key {}, {!r}'
+                            .format(entry.filename, entry.key,
+                                    entry._parsed_key))
             pywikibot.exception(e, tb=True)
             continue
 
-        func(entry)
+        if func is None or func(entry):
+            if output_func or action_func is None:
+                if output_func is None:
+                    output = entry
+                else:
+                    output = output_func(entry)
+                if output is not None:
+                    pywikibot.output(output)
+            if action_func:
+                action_func(entry)
 
+
+def _parse_command(command, name):
+    """Parse command."""
+    obj = globals().get(command)
+    if callable(obj):
+        return obj
+
+    try:
+        return eval('lambda entry: ' + command)
+    except Exception:
+        pywikibot.exception()
+        pywikibot.error(
+            'Cannot compile {} command: {}'.format(name, command))
+        return None
+
+
+# Filter commands
 
 def has_password(entry):
     """Entry has a password in the entry."""
-    if 'lgpassword' in entry._uniquedescriptionstr():
-        return entry
+    return entry if 'lgpassword' in entry._uniquedescriptionstr() else None
 
 
 def is_logout(entry):
     """Entry is a logout entry."""
-    if not entry._data and 'logout' in entry.key:
-        return entry
+    return entry if not entry._data and 'logout' in entry.key else None
 
 
 def empty_response(entry):
     """Entry has no data."""
-    if not entry._data and 'logout' not in entry.key:
-        return entry
+    return entry if not entry._data and 'logout' not in entry.key else None
 
 
 def not_accessed(entry):
     """Entry has never been accessed."""
     if not hasattr(entry, 'stinfo'):
-        return
+        return None
 
     if entry.stinfo.st_atime <= entry.stinfo.st_mtime:
         return entry
 
+    return None
+
 
 def incorrect_hash(entry):
+    """Incorrect hash."""
     if hashlib.sha256(entry.key.encode('utf-8')).hexdigest() != entry.filename:
         return entry
+    return None
 
 
 def older_than(entry, interval):
-    if entry._cachetime + interval < datetime.datetime.now():
+    """Find older entries."""
+    if entry._cachetime + interval < datetime.datetime.utcnow():
         return entry
+    return None
 
 
 def newer_than(entry, interval):
-    if entry._cachetime + interval >= datetime.datetime.now():
+    """Find newer entries."""
+    if entry._cachetime + interval >= datetime.datetime.utcnow():
         return entry
+    return None
 
 
 def older_than_one_day(entry):
+    """Find more than one day old entries."""
     if older_than(entry, datetime.timedelta(days=1)):
         return entry
+    return None
 
 
 def recent(entry):
-    if newer_than(entry, datetime.timedelta(hours=1)):
-        return entry
+    """Find entries newer than on hour."""
+    return entry if newer_than(entry, datetime.timedelta(hours=1)) else None
+
+
+# Output commands
+
+def uniquedesc(entry):
+    """Return the unique description string."""
+    return entry._uniquedescriptionstr()
+
+
+def parameters(entry):
+    """Return a pretty formatted parameters list."""
+    lines = ''
+    for key, items in sorted(entry._params.items()):
+        lines += '{}={}\n'.format(key, ', '.join(items))
+    return lines
 
 
 def main():
-    local_args = pywikibot.handleArgs()
+    """Process command line arguments and invoke bot."""
+    local_args = pywikibot.handle_args()
     cache_paths = None
     delete = False
     command = None
+    output = None
 
     for arg in local_args:
         if command == '':
             command = arg
+        elif output == '':
+            output = arg
         elif arg == '-delete':
             delete = True
         elif arg == '-password':
             command = 'has_password(entry)'
         elif arg == '-c':
             if command:
-                pywikibot.error('Only one command may be executed.')
-                exit(1)
+                sys.exit('Only one command may be executed.')
             command = ''
+        elif arg == '-o':
+            if output:
+                sys.exit('Only one output may be defined.')
+            output = ''
         else:
             if not cache_paths:
                 cache_paths = [arg]
             else:
                 cache_paths.append(arg)
 
-    func = None
-
     if not cache_paths:
-        cache_paths = ['apicache', 'tests/apicache']
+        folders = ('apicache', 'apicache-py2', 'apicache-py3')
+        cache_paths = list(folders)
+        # Add tests folders
+        cache_paths += [os.path.join('tests', f) for f in folders]
 
-        # Also process the base directory, if it isnt the current directory
-        if os.path.abspath(os.getcwd()) != pywikibot.config2.base_dir:
+        # Also process the base directory, if it isn't the current directory
+        if os.path.abspath(os.getcwd()) != pywikibot.config.base_dir:
             cache_paths += [
-                os.path.join(pywikibot.config2.base_dir, 'apicache')]
+                os.path.join(pywikibot.config.base_dir, f) for f in folders]
 
-        # Also process the user home cache, if it isnt the config directory
-        if os.path.expanduser('~/.pywikibot') != pywikibot.config2.base_dir:
+        # Also process the user home cache, if it isn't the config directory
+        userpath = os.path.expanduser(os.path.join('~', '.pywikibot'))
+        if userpath != pywikibot.config.base_dir:
             cache_paths += [
-                os.path.join(os.path.expanduser('~/.pywikibot'), 'apicache')]
+                os.path.join(userpath, f) for f in folders]
 
     if delete:
-        action_func = lambda entry: entry._delete()
+        action_func = CacheEntry._delete
     else:
-        action_func = lambda entry: pywikibot.output(entry)
+        action_func = None
+
+    if output:
+        output_func = _parse_command(output, 'output')
+        if output_func is None:
+            return
+    else:
+        output_func = None
 
     if command:
-        try:
-            command_func = eval('lambda entry: ' + command)
-        except:
-            pywikibot.exception()
-            pywikibot.error(u'Can not compile command: %s' % command)
-            exit(1)
-
-        func = lambda entry: command_func(entry) and action_func(entry)
+        filter_func = _parse_command(command, 'filter')
+        if filter_func is None:
+            return
     else:
-        func = action_func
+        filter_func = None
 
     for cache_path in cache_paths:
         if len(cache_paths) > 1:
-            pywikibot.output(u'Processing %s' % cache_path)
-        process_entries(cache_path, func)
+            pywikibot.output('Processing {}'.format(cache_path))
+        process_entries(cache_path, filter_func, output_func=output_func,
+                        action_func=action_func)
+
 
 if __name__ == '__main__':
     main()

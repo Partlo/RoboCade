@@ -603,8 +603,6 @@ class FeaturedBot(pywikibot.Bot):
             except pywikibot.LockedPage:
                 pywikibot.output(u'Page %s is locked!'
                                  % dest.title())
-            except pywikibot.PageNotSaved:
-                pywikibot.output(u"Page not saved")
 
 
 def main(*args):

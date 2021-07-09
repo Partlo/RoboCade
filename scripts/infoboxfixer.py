@@ -25,17 +25,16 @@ class Imager:
         for page in self.gen:
             text = page.get()
             name = page.title()
-            print name
+            print(name)
             try:
                 new_text = text
                 era_text = re.sub(r"\{\{[Ee]ras(\||\})", r"", text)
                 if text == era_text:
-                    print "%s is missing {{Eras}}, adding" % name
+                    print("%s is missing {{Eras}}, adding" % name)
                     new_text = "{{Eras}}\n" + text
                     pywikibot.showDiff(text, new_text)
-                    choice = pywikibot.inputChoice(u'Do you want to accept these changes?',
-                                                   ['Yes', 'No', 'Quit'],
-                                                   ['y', 'N', 'q'], 'N')
+                    choice = pywikibot.input_choice(u'Do you want to accept these changes?',
+                                                    [['Yes', 'y'], ['No', 'N'], ['Quit', 'q']], 'N')
                     if choice == 'q':
                         break
                     elif choice == 'y':

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 """
 This script can move pages.
 
@@ -26,179 +25,161 @@ Furthermore, the following command line parameters are supported:
 -summary          Prompt for a custom summary, bypassing the predefined message
                   texts. Argument can also be given as "-summary:XYZ".
 
--pairs            Read pairs of file names from a file. The file must be in a
+-pairsfile        Read pairs of file names from a file. The file must be in a
                   format [[frompage]] [[topage]] [[frompage]] [[topage]] ...
-                  Argument can also be given as "-pairs:filename"
+                  Argument can also be given as "-pairsfile:filename"
 
 """
 #
-# (C) Leonardo Gregianin, 2006
-# (C) Andreas J. Schwab, 2007
-# (C) Pywikibot team, 2006-2014
+# (C) Pywikibot team, 2006-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
 import re
+
 import pywikibot
-from pywikibot import i18n, pagegenerators, Bot
+from pywikibot import i18n, pagegenerators
+from pywikibot.bot import CurrentPageBot
+from pywikibot.exceptions import PageRelatedError
+
 
 # This is required for the text that is shown when you run this script
 # with the parameter -help.
-docuReplacements = {
-    '&params;':     pagegenerators.parameterHelp,
-}
+docuReplacements = {'&params;': pagegenerators.parameterHelp}  # noqa: N816
 
 
-class MovePagesBot(Bot):
+class MovePagesBot(CurrentPageBot):
 
     """Page move bot."""
 
-    def __init__(self, generator, **kwargs):
-        self.availableOptions.update({
+    def __init__(self, **kwargs) -> None:
+        """Initializer."""
+        self.available_options.update({
             'prefix': None,
             'noredirect': False,
             'movetalkpage': True,
             'skipredirects': False,
             'summary': None,
         })
-        super(MovePagesBot, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
-        self.generator = generator
         self.appendAll = False
         self.regexAll = False
         self.noNamespace = False
 
-    def moveOne(self, page, newPageTitle):
+    def moveOne(self, page, newPageTitle) -> None:
+        """Move on page to newPageTitle."""
         try:
-            msg = self.getOption('summary')
+            msg = self.opt.summary
             if not msg:
                 msg = i18n.twtranslate(page.site, 'movepages-moving')
-            pywikibot.output(u'Moving page %s to [[%s]]'
-                             % (page.title(asLink=True),
-                                newPageTitle))
-            page.move(newPageTitle, reason=msg, movetalkpage=self.getOption('movetalkpage'),
-                      deleteAndMove=self.getOption('noredirect'))
-        except pywikibot.PageRelatedError as error:
+            pywikibot.output('Moving page {} to [[{}]]'
+                             .format(page, newPageTitle))
+            page.move(
+                newPageTitle, reason=msg,
+                movetalk=self.opt.movetalkpage,
+                noredirect=self.opt.noredirect)
+        except PageRelatedError as error:
             pywikibot.output(error)
 
-    def treat(self, page):
-        self.current_page = page
+    def skip_page(self, page):
+        """Treat only non-redirect pages if 'skipredirects' is set."""
         if self.getOption('skipredirects') and page.isRedirectPage():
-            pywikibot.output(u'Page %s is a redirect; skipping.' % page.title())
-            return
-        pagetitle = page.title(withNamespace=False)
+            pywikibot.warning(
+                'Page {page} on {page.site} is a redirect; skipping'
+                .format(page=page))
+            return True
+        return super().skip_page(page)
+
+    def treat_page(self):
+        """Treat a single page."""
+        page = self.current_page
+        pagetitle = page.title(with_ns=False)
         namesp = page.site.namespace(page.namespace())
+
         if self.appendAll:
-            newPageTitle = (u'%s%s%s'
-                            % (self.pagestart, pagetitle, self.pageend))
+            newPageTitle = '{}{}{}'.format(self.pagestart, pagetitle,
+                                           self.pageend)
             if not self.noNamespace and namesp:
-                newPageTitle = (u'%s:%s' % (namesp, newPageTitle))
+                newPageTitle = '{}:{}'.format(namesp, newPageTitle)
         elif self.regexAll:
             newPageTitle = self.regex.sub(self.replacePattern, pagetitle)
             if not self.noNamespace and namesp:
-                newPageTitle = (u'%s:%s' % (namesp, newPageTitle))
-        if self.getOption('prefix'):
-            newPageTitle = (u'%s%s' % (self.getOption('prefix'), pagetitle))
-        if self.getOption('prefix') or self.appendAll or self.regexAll:
-            if not self.getOption('always'):
-                choice2 = pywikibot.input_choice(
-                    u'Change the page title to "%s"?' % newPageTitle,
-                    [('yes', 'y'), ('no', 'n'), ('all', 'a')])
-                if choice2 == 'y':
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'a':
-                    self.options['always'] = True
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'n':
-                    pass
+                newPageTitle = '{}:{}'.format(namesp, newPageTitle)
+        if self.opt.prefix:
+            newPageTitle = '{}{}'.format(self.opt.prefix, pagetitle)
+        if self.opt.prefix or self.appendAll or self.regexAll:
+            if self.user_confirm('Change the page title to {!r}?'
+                                 .format(newPageTitle)):
+                self.moveOne(page, newPageTitle)
+            return
+
+        # else:
+        choice = pywikibot.input_choice('What do you want to do?',
+                                        [('change page name', 'c'),
+                                         ('append to page name', 'a'),
+                                         ('use a regular expression', 'r'),
+                                         ('next page', 'n')])
+        if choice == 'c':
+            newPageTitle = pywikibot.input('New page name:')
+            self.moveOne(page, newPageTitle)
+        elif choice == 'a':
+            self.pagestart = pywikibot.input('Append this to the start:')
+            self.pageend = pywikibot.input('Append this to the end:')
+            newPageTitle = ('{}{}{}'.format(self.pagestart, pagetitle,
+                                            self.pageend))
+            if namesp:
+                if pywikibot.input_yn('Do you want to remove the '
+                                      'namespace prefix "{}:"?'.format(namesp),
+                                      automatic_quit=False):
+                    self.noNamespace = True
                 else:
-                    self.treat(page)
+                    newPageTitle = ('{}:{}'.format(namesp, newPageTitle))
+            choice2 = pywikibot.input_choice(
+                'Change the page title to {!r}?'.format(newPageTitle),
+                [('yes', 'y'), ('no', 'n'), ('all', 'a')])
+            if choice2 == 'y':
+                self.moveOne(page, newPageTitle)
+            elif choice2 == 'a':
+                self.appendAll = True
+                self.moveOne(page, newPageTitle)
+        elif choice == 'r':
+            searchPattern = pywikibot.input('Enter the search pattern:')
+            self.replacePattern = pywikibot.input(
+                'Enter the replace pattern:')
+            self.regex = re.compile(searchPattern)
+            if page.title() == page.title(with_ns=False):
+                newPageTitle = self.regex.sub(self.replacePattern,
+                                              page.title())
             else:
-                self.moveOne(page, newPageTitle)
-        else:
-            choice = pywikibot.input_choice(u'What do you want to do?',
-                                            [('change page name', 'c'),
-                                             ('append to page name', 'a'),
-                                             ('use a regular expression', 'r'),
-                                             ('next page', 'n')])
-            if choice == 'c':
-                newPageTitle = pywikibot.input(u'New page name:')
-                self.moveOne(page, newPageTitle)
-            elif choice == 'a':
-                self.pagestart = pywikibot.input(u'Append this to the start:')
-                self.pageend = pywikibot.input(u'Append this to the end:')
-                newPageTitle = (u'%s%s%s'
-                                % (self.pagestart, pagetitle, self.pageend))
-                if namesp:
-                    if pywikibot.input_yn(u'Do you want to remove the '
-                                          'namespace prefix "%s:"?' % namesp,
-                                          automatic_quit=False):
-                        self.noNamespace = True
-                    else:
-                        newPageTitle = (u'%s:%s' % (namesp, newPageTitle))
-                choice2 = pywikibot.input_choice(
-                    u'Change the page title to "%s"?'
-                    % newPageTitle, [('yes', 'y'), ('no', 'n'), ('all', 'a')])
-                if choice2 == 'y':
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'a':
-                    self.appendAll = True
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'n':
-                    pass
+                if pywikibot.input_yn('Do you want to remove the '
+                                      'namespace prefix "{}:"?'.format(namesp),
+                                      automatic_quit=False):
+                    newPageTitle = self.regex.sub(
+                        self.replacePattern, page.title(with_ns=False))
+                    self.noNamespace = True
                 else:
-                    self.treat(page)
-            elif choice == 'r':
-                searchPattern = pywikibot.input(u'Enter the search pattern:')
-                self.replacePattern = pywikibot.input(
-                    u'Enter the replace pattern:')
-                self.regex = re.compile(searchPattern)
-                if page.title() == page.title(withNamespace=False):
                     newPageTitle = self.regex.sub(self.replacePattern,
                                                   page.title())
-                else:
-                    if pywikibot.input_yn(u'Do you want to remove the '
-                                          'namespace prefix "%s:"?' % namesp,
-                                          automatic_quit=False):
-                        newPageTitle = self.regex.sub(
-                            self.replacePattern, page.title(withNamespace=False))
-                        self.noNamespace = True
-                    else:
-                        newPageTitle = self.regex.sub(self.replacePattern,
-                                                      page.title())
-                choice2 = pywikibot.input_choice(
-                    u'Change the page title to "%s"?'
-                    % newPageTitle, [('yes', 'y'), ('no', 'n'), ('all', 'a')])
-                if choice2 == 'y':
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'a':
-                    self.regexAll = True
-                    self.moveOne(page, newPageTitle)
-                elif choice2 == 'n':
-                    pass
-                else:
-                    self.treat(page)
-            elif choice == 'n':
-                pass
-            else:
-                self.treat(page)
+            choice2 = pywikibot.input_choice(
+                'Change the page title to {!r}?'.format(newPageTitle),
+                [('yes', 'y'), ('no', 'n'), ('all', 'a')])
+            if choice2 == 'y':
+                self.moveOne(page, newPageTitle)
+            elif choice2 == 'a':
+                self.regexAll = True
+                self.moveOne(page, newPageTitle)
 
 
-def main(*args):
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
-    gen = None
     oldName = None
     options = {}
     fromToPairs = []
@@ -206,14 +187,15 @@ def main(*args):
     # Process global args and prepare generator args parser
     local_args = pywikibot.handle_args(args)
     genFactory = pagegenerators.GeneratorFactory()
+    local_args = genFactory.handle_args(local_args)
 
     for arg in local_args:
-        if arg.startswith('-pairs'):
-            if len(arg) == len('-pairs'):
+        if arg.startswith('-pairsfile'):
+            if len(arg) == len('-pairsfile'):
                 filename = pywikibot.input(
-                    u'Enter the name of the file containing pairs:')
+                    'Enter the name of the file containing pairs:')
             else:
-                filename = arg[len('-pairs:'):]
+                filename = arg[len('-pairsfile:'):]
             oldName1 = None
             for page in pagegenerators.TextfilePageGenerator(filename):
                 if oldName1:
@@ -223,7 +205,7 @@ def main(*args):
                     oldName1 = page.title()
             if oldName1:
                 pywikibot.warning(
-                    u'file %s contains odd number of links' % filename)
+                    'file {} contains odd number of links'.format(filename))
         elif arg == '-noredirect':
             options['noredirect'] = True
         elif arg == '-notalkpage':
@@ -234,43 +216,40 @@ def main(*args):
             options['skipredirects'] = True
         elif arg.startswith('-from:'):
             if oldName:
-                pywikibot.warning(u'-from:%s without -to:' % oldName)
+                pywikibot.warning('-from:{} without -to:'.format(oldName))
             oldName = arg[len('-from:'):]
         elif arg.startswith('-to:'):
             if oldName:
                 fromToPairs.append([oldName, arg[len('-to:'):]])
                 oldName = None
             else:
-                pywikibot.warning(u'%s without -from' % arg)
+                pywikibot.warning('{} without -from'.format(arg))
         elif arg.startswith('-prefix'):
             if len(arg) == len('-prefix'):
-                options['prefix'] = pywikibot.input(u'Enter the prefix:')
+                options['prefix'] = pywikibot.input('Enter the prefix:')
             else:
                 options['prefix'] = arg[8:]
         elif arg.startswith('-summary'):
             if len(arg) == len('-summary'):
-                options['summary'] = pywikibot.input(u'Enter the summary:')
+                options['summary'] = pywikibot.input('Enter the summary:')
             else:
                 options['summary'] = arg[9:]
-        else:
-            genFactory.handleArg(arg)
 
     if oldName:
-        pywikibot.warning(u'-from:%s without -to:' % oldName)
+        pywikibot.warning('-from:{} without -to:'.format(oldName))
     site = pywikibot.Site()
     for pair in fromToPairs:
         page = pywikibot.Page(site, pair[0])
-        bot = MovePagesBot(None, **options)
+        bot = MovePagesBot(**options)
         bot.moveOne(page, pair[1])
 
-    if not gen:
-        gen = genFactory.getCombinedGenerator()
+    gen = genFactory.getCombinedGenerator(preload=True)
     if gen:
-        preloadingGen = pagegenerators.PreloadingGenerator(gen)
-        bot = MovePagesBot(preloadingGen, **options)
+        bot = MovePagesBot(generator=gen, **options)
         bot.run()
     elif not fromToPairs:
-        pywikibot.showHelp()
+        pywikibot.bot.suggest_help(missing_generator=True)
+
 
 if __name__ == '__main__':
     main()

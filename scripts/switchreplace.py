@@ -1,5 +1,12 @@
+import codecs
+import re
+
+import fixes
 import pywikibot
-from pywikibot import pagegenerators
+from pyparsing import basestring
+from pywikibot import pagegenerators, i18n
+from scripts.replace import XmlDumpReplacePageGenerator, prepareRegexForMySQL
+
 
 def main(*args):
     add_cat = None
@@ -69,7 +76,7 @@ def main(*args):
     excappend = True
 
     # Read commandline parameters.
-    for arg in pywikibot.handleArgs(*args):
+    for arg in pywikibot.handle_args(*args):
         if arg == '-regex':
             regex = True
         elif arg.startswith('-xmlstart'):
@@ -166,16 +173,12 @@ def main(*args):
         elif arg.startswith('-query:'):
             maxquerysize = int(arg[7:])
         else:
-            if not genFactory.handleArg(arg):
+            if not genFactory.handle_arg(arg):
                 commandline_replacements.append(arg)
 
-    if pywikibot.verbose:
-        pywikibot.output(u"commandline_replacements: " +
-                         ', '.join(commandline_replacements))
-
-    if (len(commandline_replacements) % 2):
-        raise pywikibot.Error, 'require even number of replacements.'
-    elif (len(commandline_replacements) == 2 and fix is None):
+    if len(commandline_replacements) % 2:
+        raise pywikibot.Error('require even number of replacements.')
+    elif len(commandline_replacements) == 2 and fix is None:
         replacements.append((commandline_replacements[0],
                              commandline_replacements[1]))
         if not summary_commandline:
@@ -184,14 +187,13 @@ def main(*args):
                                            {'description': ' (-%s +%s)'
                                             % (commandline_replacements[0],
                                                commandline_replacements[1])})
-    elif (len(commandline_replacements) > 1):
+    elif len(commandline_replacements) > 1:
         if (fix is None):
-            for i in xrange(0, len(commandline_replacements), 2):
+            for i in range(0, len(commandline_replacements), 2):
                 replacements.append((commandline_replacements[i],
                                      commandline_replacements[i + 1]))
             if not summary_commandline:
-                pairs = [(commandline_replacements[i],
-                           commandline_replacements[i + 1])
+                pairs = [(commandline_replacements[i], commandline_replacements[i + 1])
                          for i in range(0, len(commandline_replacements), 2)]
                 replacementsDescription = '(%s)' % ', '.join(
                     [('-' + pair[0] + ' +' + pair[1]) for pair in pairs])

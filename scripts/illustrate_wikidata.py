@@ -1,126 +1,117 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
-Bot to add images to Wikidata items. The image is extracted from the page_props.
+Bot to add images to Wikidata items.
 
-For this to be available the PageImages extension
-(https://www.mediawiki.org/wiki/Extension:PageImages) needs to be installed
+The image is extracted from the page_props. For this to be available the
+PageImages extension (https://www.mediawiki.org/wiki/Extension:PageImages)
+needs to be installed
 
 Usage:
 
-python illustrate_wikidata.py <some generator>
+    python pwb.py illustrate_wikidata <some generator>
 
 &params;
 """
 #
-# (C) Multichill, 2014
-# (C) Pywikibot team, 2013-2014
+# (C) Pywikibot team, 2013-2021
 #
 # Distributed under the terms of MIT License.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
 import pywikibot
+from pywikibot import WikidataBot, pagegenerators
 
-from pywikibot import pagegenerators, WikidataBot
 
-docuReplacements = {'&params;': pywikibot.pagegenerators.parameterHelp}
+docuReplacements = {'&params;': pagegenerators.parameterHelp}  # noqa: N816
 
 
 class IllustrateRobot(WikidataBot):
 
     """A bot to add Wikidata image claims."""
 
-    def __init__(self, generator, wdproperty=u'P18'):
+    def __init__(self, generator, wdproperty='P18') -> None:
         """
-        Constructor.
+        Initializer.
 
-        Arguments:
-            * generator     - A generator that yields Page objects.
-            * wdproperty    - The property to add. Should be of type commonsMedia
-
+        :param generator: A generator that yields Page objects
+        :type generator: generator
+        :param wdproperty: The property to add. Should be of type commonsMedia
+        :type wdproperty: str
         """
-        super(IllustrateRobot, self).__init__()
-        self.generator = pagegenerators.PreloadingGenerator(generator)
+        super().__init__()
+        self.generator = generator
         self.wdproperty = wdproperty
         self.cacheSources()
 
         claim = pywikibot.Claim(self.repo, self.wdproperty)
         if claim.type != 'commonsMedia':
-            raise ValueError(u'%s is of type %s, should be commonsMedia'
-                             % (self.wdproperty, claim.type))
+            raise ValueError('{} is of type {}, should be commonsMedia'
+                             .format(self.wdproperty, claim.type))
 
-    def treat(self, page, item):
+    def treat_page_and_item(self, page, item) -> None:
         """Treat a page / item."""
-        self.current_page = page
-
-        pywikibot.output(u'Found %s' % item.title())
-        imagename = page.properties().get('page_image')
+        pywikibot.output('Found ' + item.title())
+        imagename = page.properties().get('page_image_free')
 
         if not imagename:
             return
 
         claims = item.get().get('claims')
         if self.wdproperty in claims:
-            pywikibot.output(u'Item %s already contains image (%s)' % (item.title(), self.wdproperty))
+            pywikibot.output('Item {} already contains image ({})'
+                             .format(item.title(), self.wdproperty))
             return
 
         newclaim = pywikibot.Claim(self.repo, self.wdproperty)
-        commonssite = pywikibot.Site("commons", "commons")
-        imagelink = pywikibot.Link(imagename, source=commonssite, defaultNamespace=6)
+        commonssite = pywikibot.Site('commons', 'commons')
+        imagelink = pywikibot.Link(imagename, source=commonssite,
+                                   default_namespace=6)
         image = pywikibot.FilePage(imagelink)
         if image.isRedirectPage():
             image = pywikibot.FilePage(image.getRedirectTarget())
 
         if not image.exists():
-            pywikibot.output('[[%s]] doesn\'t exist so I can\'t link to it' % (image.title(),))
+            pywikibot.output("{} doesn't exist so I can't link to it"
+                             .format(image.title(as_link=True)))
             return
 
         newclaim.setTarget(image)
-        pywikibot.output('Adding %s --> %s' % (newclaim.getID(), newclaim.getTarget()))
-        item.addClaim(newclaim)
-
         # A generator might yield pages from multiple sites
-        source = self.getSource(page.site)
-        if source:
-            newclaim.addSource(source, bot=True)
+        self.user_add_claim(item, newclaim, page.site)
 
 
-def main(*args):
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
     # Process global args and prepare generator args parser
     local_args = pywikibot.handle_args(args)
     generator_factory = pagegenerators.GeneratorFactory()
 
-    wdproperty = u'P18'
+    wdproperty = 'P18'
 
     for arg in local_args:
         if arg.startswith('-property'):
             if len(arg) == 9:
                 wdproperty = pywikibot.input(
-                    u'Please enter the property you want to add:')
+                    'Please enter the property you want to add:')
             else:
                 wdproperty = arg[10:]
         else:
-            generator_factory.handleArg(arg)
+            generator_factory.handle_arg(arg)
 
-    generator = generator_factory.getCombinedGenerator()
+    generator = generator_factory.getCombinedGenerator(preload=True)
     if not generator:
-        pywikibot.output('I need a generator with pages to work on')
+        pywikibot.bot.suggest_help(missing_generator=True)
         return
 
     bot = IllustrateRobot(generator, wdproperty)
     bot.run()
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()

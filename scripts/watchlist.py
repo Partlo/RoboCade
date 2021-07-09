@@ -1,115 +1,102 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 Allows access to the bot account's watchlist.
 
-The function refresh() downloads the current watchlist and saves it to disk.
-It is run automatically when a bot first tries to save a page retrieved. The
-watchlist can be updated manually by running this script. The list will also
-be reloaded automatically once a month.
+The watchlist can be updated manually by running this script.
 
-Syntax: python watchlist [-all | -new]
+Syntax:
+
+    python pwb.py watchlist [-all | -count | -count:all | -new]
 
 Command line options:
-    -all  -  Reloads watchlists for all wikis where a watchlist is already
+
+-all         Reloads watchlists for all wikis where a watchlist is already
              present
-    -new  -  Load watchlists for all wikis where accounts is setting in
+-count       Count only the total number of pages on the watchlist of the
+             account the bot has access to
+-count:all   Count only the total number of pages on all wikis watchlists
+             that the bot is connected to.
+-new         Load watchlists for all wikis where accounts is setting in
              user-config.py
 """
 #
-# (C) Daniel Herding, 2005
-# (C) Pywikibot team, 2005-2014
+# (C) Pywikibot team, 2005-2020
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
 import os
+
 import pywikibot
 from pywikibot import config
 from pywikibot.data.api import CachedRequest
+from pywikibot.exceptions import InvalidTitleError
 from scripts.maintenance.cache import CacheEntry
-
-cache = {}
 
 
 def get(site=None):
     """Load the watchlist, fetching it if necessary."""
     if site is None:
         site = pywikibot.Site()
-    if site in cache:
-        # Use cached copy if it exists.
-        watchlist = cache[site]
-    else:
-        # create cached copy
-        watchlist = refresh(site)
-        cache[site] = watchlist
+    watchlist = [p.title() for p in site.watched_pages()]
     return watchlist
 
 
-def isWatched(pageName, site=None):
+def count_watchlist(site=None):
+    """Count only the total number of page(s) in watchlist for this wiki."""
+    if site is None:
+        site = pywikibot.Site()
+    watchlist_count = len(refresh(site))
+    pywikibot.output('There are {} page(s) in the watchlist.'
+                     .format(watchlist_count))
+
+
+def count_watchlist_all():
+    """Count only the total number of page(s) in watchlist for all wikis."""
+    wl_count_all = 0
+    pywikibot.output('Counting pages in watchlists of all wikis...')
+    for family in config.usernames:
+        for lang in config.usernames[family]:
+            site = pywikibot.Site(lang, family)
+            wl_count_all += len(refresh(site))
+    pywikibot.output('There are a total of {} page(s) in the watchlists'
+                     'for all wikis.'.format(wl_count_all))
+
+
+def isWatched(pageName, site=None):  # noqa N802, N803
     """Check whether a page is being watched."""
     watchlist = get(site)
     return pageName in watchlist
 
 
-def refresh(site, sysop=False):
+def refresh(site):
     """Fetch the watchlist."""
-    if not site.logged_in(sysop=sysop):
-        site.login(sysop=sysop)
-
-    params = {
-        'action': 'query',
-        'list': 'watchlistraw',
-        'wrlimit': config.special_page_limit,
-    }
-
-    pywikibot.output(u'Retrieving watchlist for %s via API.' % str(site))
-    # pywikibot.put_throttle() # It actually is a get, but a heavy one.
-    watchlist = []
-    while True:
-        req = CachedRequest(config.API_config_expiry, site=site, **params)
-        data = req.submit()
-        if 'error' in data:
-            raise RuntimeError('ERROR: %s' % data)
-        watchlist.extend([w['title'] for w in data['watchlistraw']])
-
-        if 'query-continue' in data:
-            params.update(data['query-continue']['watchlistraw'])
-        else:
-            break
-    return watchlist
+    pywikibot.output('Retrieving watchlist for {}.'.format(str(site)))
+    return list(site.watched_pages(force=True))
 
 
-def refresh_all(sysop=False):
+def refresh_all():
     """Reload watchlists for all wikis where a watchlist is already present."""
     cache_path = CachedRequest._get_cache_dir()
-    files = os.listdir(cache_path)
-    seen = []
+    files = os.scandir(cache_path)
+    seen = set()
     for filename in files:
         entry = CacheEntry(cache_path, filename)
         entry._load_cache()
         entry.parse_key()
         entry._rebuild()
-        if entry.site not in seen:
-            if entry._data['watchlistraw']:
-                refresh(entry.site, sysop)
-                seen.append(entry.site)
+        if entry.site not in seen and 'watchlistraw' in entry._data:
+            refresh(entry.site)
+            seen.add(entry.site)
 
 
-def refresh_new(sysop=False):
+def refresh_new():
     """Load watchlists of all wikis for accounts set in user-config.py."""
     pywikibot.output(
         'Downloading all watchlists for your accounts in user-config.py')
     for family in config.usernames:
         for lang in config.usernames[family]:
-            refresh(pywikibot.Site(lang, family), sysop=sysop)
-    for family in config.sysopnames:
-        for lang in config.sysopnames[family]:
-            refresh(pywikibot.Site(lang, family), sysop=sysop)
+            site = pywikibot.Site(lang, family)
+            refresh(site)
 
 
 def main(*args):
@@ -118,31 +105,40 @@ def main(*args):
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
-    all = False
-    new = False
-    sysop = False
+    opt_all = False
+    opt_new = False
+    opt_count = False
+    opt_count_all = False
     for arg in pywikibot.handle_args(args):
         if arg in ('-all', '-update'):
-            all = True
+            opt_all = True
         elif arg == '-new':
-            new = True
-        elif arg == '-sysop':
-            sysop = True
-    if all:
-        refresh_all(sysop=sysop)
-    elif new:
-        refresh_new(sysop=sysop)
+            opt_new = True
+        elif arg == '-count':
+            opt_count = True
+        elif arg == '-count:all':
+            opt_count_all = True
+    if opt_all:
+        refresh_all()
+    elif opt_new:
+        refresh_new()
+    elif opt_count:
+        count_watchlist()
+    elif opt_count_all:
+        count_watchlist_all()
     else:
         site = pywikibot.Site()
-        refresh(site, sysop=sysop)
+        count_watchlist(site)
+        watchlist = list(site.watched_pages(force=True))
+        for page in watchlist:
+            try:
+                pywikibot.stdout(page.title())
+            except InvalidTitleError:
+                pywikibot.exception()
 
-        watchlist = get(site)
-        pywikibot.output(u'%i pages in the watchlist.' % len(watchlist))
-        for pageName in watchlist:
-            pywikibot.output(pageName, toStdout=True)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -1,28 +1,21 @@
-# -*- coding: utf-8  -*-
 """Tests for the Tk UI."""
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2021
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-
-
 import os
-import sys
-
-if os.environ.get('PYWIKIBOT2_TEST_GUI', '0') == '1':
-    if sys.version_info[0] > 2:
-        import tkinter as Tkinter
-    else:
-        import Tkinter
-    from pywikibot.userinterfaces.gui import EditBoxWindow, Tkdialog
+import unittest
+from contextlib import suppress
 
 import pywikibot
+from tests.aspects import DefaultSiteTestCase, TestCase
 
-from tests.aspects import unittest, TestCase, DefaultSiteTestCase
+
+if os.environ.get('PYWIKIBOT_TEST_GUI', '0') == '1':
+    import tkinter
+
+    from pywikibot.userinterfaces.gui import EditBoxWindow, Tkdialog
 
 
 class TestTkdialog(TestCase):
@@ -31,13 +24,8 @@ class TestTkdialog(TestCase):
 
     net = True
 
-    @classmethod
-    def setUpClass(cls):
-        if os.environ.get('PYWIKIBOT2_TEST_GUI', '0') != '1':
-            raise unittest.SkipTest('Tkdialog tests are disabled on Travis-CI')
-        super(TestTkdialog, cls).setUpClass()
-
     def testTkdialog(self):
+        """Test Tk dialog."""
         try:
             box = Tkdialog('foo', 'tests/data/MP_sounds.png', 'MP_sounds.png')
             box.show_dialog()
@@ -51,26 +39,25 @@ class TestTkinter(DefaultSiteTestCase):
 
     net = True
 
-    @classmethod
-    def setUpClass(cls):
-        if os.environ.get('PYWIKIBOT2_TEST_GUI', '0') != '1':
-            raise unittest.SkipTest('Tkinter tests are disabled on Travis-CI')
-        super(TestTkinter, cls).setUpClass()
-
     def testTkinter(self):
-        root = Tkinter.Tk()
-        root.resizable(width=Tkinter.FALSE, height=Tkinter.FALSE)
-        root.title("pywikibot GUI")
-        page = pywikibot.Page(pywikibot.Site(), u'Main Page')
+        """Test Tkinter window."""
+        root = tkinter.Tk()
+        root.resizable(width=tkinter.FALSE, height=tkinter.FALSE)
+        root.title('pywikibot GUI')
+        page = pywikibot.Page(pywikibot.Site(), 'Main Page')
         content = page.get()
         myapp = EditBoxWindow(root)
-        myapp.bind("<Control-d>", myapp.debug)
+        myapp.bind('<Control-d>', myapp.debug)
         v = myapp.edit(content, highlight=page.title())
-        assert v is None
+        self.assertIsNone(v)
 
 
-if __name__ == '__main__':
-    try:
+def setUpModule():  # noqa: N802
+    """Skip Travis tests if PYWIKIBOT_TEST_GUI variable is not set."""
+    if os.environ.get('PYWIKIBOT_TEST_GUI', '0') != '1':
+        raise unittest.SkipTest('Tkinter tests are disabled on Travis-CI')
+
+
+if __name__ == '__main__':  # pragma: no cover
+    with suppress(SystemExit):
         unittest.main()
-    except SystemExit:
-        pass

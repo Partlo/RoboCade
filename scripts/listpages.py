@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8  -*-
 r"""
 Print a list of pages, as defined by page generator parameters.
 
@@ -8,51 +7,65 @@ in the current directory.
 
 These parameters are supported to specify which pages titles to print:
 
--format  Defines the output format.
+-format     Defines the output format.
 
-         Can be a custom string according to python string.format() notation or
-         can be selected by a number from following list (1 is default format):
-         1 - u'{num:4d} {page.title}'
-             --> 10 PageTitle
+            Can be a custom string according to python string.format() notation
+            or can be selected by a number from following list
+            (1 is default format):
+            1 - '{num:4d} {page.title}'
+                --> 10 PageTitle
 
-         2 - u'{num:4d} {[[page.title]]}'
-             --> 10 [[PageTitle]]
+            2 - '{num:4d} [[{page.title}]]'
+                --> 10 [[PageTitle]]
 
-         3 - u'{page.title}'
-             --> PageTitle
+            3 - '{page.title}'
+                --> PageTitle
 
-         4 - u'{[[page.title]]}'
-             --> [[PageTitle]]
+            4 - '[[{page.title}]]'
+                --> [[PageTitle]]
 
-         5 - u'{num:4d} \03{{lightred}}{page.loc_title:<40}\03{{default}}'
-             --> 10 PageTitle (colorised in lightred)
+            5 - '{num:4d} \03{{lightred}}{page.loc_title:<40}\03{{default}}'
+                --> 10 localised_Namespace:PageTitle (colorised in lightred)
 
-         6 - u'{num:4d} {page.loc_title:<40} {page.can_title:<40}'
-             --> 10 localised_Namespace:PageTitle canonical_Namespace:PageTitle
+            6 - '{num:4d} {page.loc_title:<40} {page.can_title:<40}'
+                --> 10 localised_Namespace:PageTitle
+                       canonical_Namespace:PageTitle
 
-         7 - u'{num:4d} {page.loc_title:<40} {page.trs_title:<40}'
-             --> 10 localised_Namespace:PageTitle outputlang_Namespace:PageTitle
-             (*) requires "outputlang:lang" set.
+            7 - '{num:4d} {page.loc_title:<40} {page.trs_title:<40}'
+                --> 10 localised_Namespace:PageTitle
+                       outputlang_Namespace:PageTitle
+                (*) requires "outputlang:lang" set.
 
-         num is the sequential number of the listed page.
+            num is the sequential number of the listed page.
 
--outputlang   Language for translation of namespaces.
+            An empty format is equal to -notitle and just shows the total
+            amount of pages.
 
--notitle Page title is not printed.
+-outputlang Language for translation of namespaces.
 
--get     Page content is printed.
+-notitle    Page title is not printed.
 
--save    Save Page content to a file named as page.title(as_filename=True).
-         Directory can be set with -save:dir_name
-         If no dir is specified, current direcory will be used.
+-get        Page content is printed.
 
--encode  File encoding can be specified with '-encode:name' (name must be a
-         valid python encoding: utf-8, etc.).
-         If not specified, it defaults to config.textfile_encoding.
+-save       Save Page content to a file named as page.title(as_filename=True).
+            Directory can be set with -save:dir_name
+            If no dir is specified, current directory will be used.
 
+-encode     File encoding can be specified with '-encode:name' (name must be
+            a valid python encoding: utf-8, etc.).
+            If not specified, it defaults to config.textfile_encoding.
+
+-put:       Save the list to the defined page of the wiki. By default it does
+            not overwrite an existing page.
+
+-overwrite  Overwrite the page if it exists. Can only by applied with -put.
+
+-summary:   The summary text when the page is written. If it's one word just
+            containing letters, dashes and underscores it uses that as a
+            translation key.
 
 Custom format can be applied to the following items extrapolated from a
-    page object:
+page object:
 
     site: obtained from page._link._site.
 
@@ -74,57 +87,53 @@ Custom format can be applied to the following items extrapolated from a
 &params;
 """
 #
-# (C) Pywikibot team, 2008-2014
+# (C) Pywikibot team, 2008-2020
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
 import os
-import codecs
-import sys
+import re
 
 import pywikibot
-from pywikibot import config2 as config
+from pywikibot import config, i18n
+from pywikibot.exceptions import Error
 from pywikibot.pagegenerators import GeneratorFactory, parameterHelp
 
-docuReplacements = {'&params;': parameterHelp}
+
+docuReplacements = {'&params;': parameterHelp}  # noqa: N816
 
 
-class Formatter(object):
+class Formatter:
 
     """Structure with Page attributes exposed for formatting from cmd line."""
 
     fmt_options = {
-        '1': u"{num:4d} {page.title}",
-        '2': u"{num:4d} [[{page.title}]]",
-        '3': u"{page.title}",
-        '4': u"[[{page.title}]]",
-        '5': u"{num:4d} \03{{lightred}}{page.loc_title:<40}\03{{default}}",
-        '6': u"{num:4d} {page.loc_title:<40} {page.can_title:<40}",
-        '7': u"{num:4d} {page.loc_title:<40} {page.trs_title:<40}",
+        '1': '{num:4d} {page.title}',
+        '2': '{num:4d} [[{page.title}]]',
+        '3': '{page.title}',
+        '4': '[[{page.title}]]',
+        '5': '{num:4d} \03{{lightred}}{page.loc_title:<40}\03{{default}}',
+        '6': '{num:4d} {page.loc_title:<40} {page.can_title:<40}',
+        '7': '{num:4d} {page.loc_title:<40} {page.trs_title:<40}',
     }
 
     # Identify which formats need outputlang
     fmt_need_lang = [k for k, v in fmt_options.items() if 'trs_title' in v]
 
-    def __init__(self, page, outputlang=None, default='******'):
+    def __init__(self, page, outputlang=None, default='******') -> None:
         """
-        Constructor.
+        Initializer.
 
-        @param page: the page to be formatted.
-        @type page: Page object.
-        @param outputlang: language code in which namespace before title should
+        :param page: the page to be formatted.
+        :type page: Page object.
+        :param outputlang: language code in which namespace before title should
             be translated.
 
             Page ns will be searched in Site(outputlang, page.site.family)
             and, if found, its custom name will be used in page.title().
 
-        @type outputlang: str or None, if no translation is wanted.
-        @param default: default string to be used if no corresponding
+        :type outputlang: str or None, if no translation is wanted.
+        :param default: default string to be used if no corresponding
             namespace is found when outputlang is not None.
 
         """
@@ -135,70 +144,75 @@ class Formatter(object):
         self.outputlang = outputlang
         if outputlang is not None:
             # Cache onsite in case of translations.
-            if not hasattr(self, "onsite"):
+            if not hasattr(self, 'onsite'):
                 self.onsite = pywikibot.Site(outputlang, self.site.family)
             try:
                 self.trs_title = page._link.ns_title(onsite=self.onsite)
             # Fallback if no corresponding namespace is found in onsite.
-            except pywikibot.Error:
-                self.trs_title = u'%s:%s' % (default, page._link.title)
+            except Error:
+                self.trs_title = '{}:{}'.format(default, page._link.title)
 
-    def output(self, num=None, fmt='1'):
+    def output(self, num=None, fmt='1') -> str:
         """Output formatted string."""
         fmt = self.fmt_options.get(fmt, fmt)
         # If selected format requires trs_title, outputlang must be set.
-        if (fmt in self.fmt_need_lang or
-                'trs_title' in fmt and
-                self.outputlang is None):
+        if (fmt in self.fmt_need_lang
+                or 'trs_title' in fmt
+                and self.outputlang is None):
             raise ValueError(
-                u"Required format code needs 'outputlang' parameter set.")
+                "Required format code needs 'outputlang' parameter set.")
         if num is None:
             return fmt.format(page=self)
-        else:
-            return fmt.format(num=num, page=self)
+        return fmt.format(num=num, page=self)
 
 
-def main(*args):
+def main(*args) -> None:
     """
     Process command line arguments and invoke bot.
 
     If args is an empty list, sys.argv is used.
 
-    @param args: command line arguments
-    @type args: list of unicode
+    :param args: command line arguments
+    :type args: str
     """
-    gen = None
     notitle = False
     fmt = '1'
     outputlang = None
     page_get = False
     base_dir = None
-    filename = None
-    articles = None
     encoding = config.textfile_encoding
+    page_target = None
+    overwrite = False
+    summary = 'listpages-save-list'
 
     # Process global args and prepare generator args parser
     local_args = pywikibot.handle_args(args)
-    genFactory = GeneratorFactory()
+    gen_factory = GeneratorFactory()
 
     for arg in local_args:
-        if arg == '-notitle':
+        option, sep, value = arg.partition(':')
+        if option == '-notitle':
             notitle = True
-        elif arg.startswith('-format:'):
-            fmt = arg[len('-format:'):]
-            fmt = fmt.replace(u'\\03{{', u'\03{{')
-        elif arg.startswith('-outputlang:'):
-            outputlang = arg[len('-outputlang:'):]
-        elif arg == '-get':
+        elif option == '-format':
+            fmt = value.replace('\\03{{', '\03{{')
+            if not fmt.strip():
+                notitle = True
+        elif option == '-outputlang':
+            outputlang = value
+        elif option == '-get':
             page_get = True
-        elif arg.startswith('-save'):
-            base_dir = arg.partition(':')[2] or '.'
-        elif arg.startswith('-encode:'):
-            encoding = arg.partition(':')[2]
-        elif arg.startswith('-file'):
-            filename = 'articles.txt'
+        elif option == '-save':
+            base_dir = value or '.'
+        elif option == '-encode':
+            encoding = value
+        elif option == '-put':
+            page_target = value
+        elif option == '-overwrite':
+            overwrite = True
+        elif option == '-summary':
+            summary = value
         else:
-            genFactory.handleArg(arg)
+            gen_factory.handle_arg(arg)
 
     if base_dir:
         base_dir = os.path.expanduser(base_dir)
@@ -206,55 +220,64 @@ def main(*args):
             base_dir = os.path.normpath(os.path.join(os.getcwd(), base_dir))
 
         if not os.path.exists(base_dir):
-            pywikibot.output(u'Directory "%s" does not exist.' % base_dir)
+            pywikibot.output('Directory "{}" does not exist.'
+                             .format(base_dir))
             choice = pywikibot.input_yn(
-                u'Do you want to create it ("No" to continue without saving)?')
+                'Do you want to create it ("No" to continue without saving)?')
             if choice:
                 os.makedirs(base_dir, mode=0o744)
             else:
                 base_dir = None
         elif not os.path.isdir(base_dir):
             # base_dir is a file.
-            pywikibot.warning(u'Not a directory: "%s"\n'
-                              u'Skipping saving ...'
-                              % base_dir)
+            pywikibot.warning('Not a directory: "{}"\n'
+                              'Skipping saving ...'
+                              .format(base_dir))
             base_dir = None
 
-    if filename:
-        articles = codecs.open(filename, encoding='utf-8',
-                               mode=(lambda x: x and 'a' or 'w')(False))
+    if page_target:
+        site = pywikibot.Site()
+        page_target = pywikibot.Page(site, page_target)
+        if not overwrite and page_target.exists():
+            pywikibot.bot.suggest_help(
+                additional_text='Page {} already exists.\n'
+                                'You can use the -overwrite argument to '
+                                'replace the content of this page.'
+                                .format(page_target.title(as_link=True)))
+            return
+        if re.match('[a-z_-]+$', summary):
+            summary = i18n.twtranslate(site, summary)
 
-    gen = genFactory.getCombinedGenerator()
+    gen = gen_factory.getCombinedGenerator()
     if gen:
         i = 0
-        try:
-            for i, page in enumerate(gen, start=1):
-                if not notitle:
-                    page_fmt = Formatter(page, outputlang)
-                    if articles:
-                        articles.write(page_fmt.output(num=i, fmt=fmt))
-                        articles.flush()
-                    else:
-                        pywikibot.stdout(page_fmt.output(num=i, fmt=fmt))
-                if page_get:
-                    try:
-                        pywikibot.output(page.text, toStdout=True)
-                    except pywikibot.Error as err:
-                        pywikibot.output(err)
-                if base_dir:
-                    filename = os.path.join(base_dir, page.title(as_filename=True))
-                    pywikibot.output(u'Saving %s to %s' % (page.title(), filename))
-                    with open(filename, mode='wb') as f:
-                        f.write(page.text.encode(encoding))
-            pywikibot.output(u"%i page(s) found" % i)
-        except KeyboardInterrupt:
-            sys.exit(0)
-        finally:
-            if articles:
-                articles.close()
+        output_list = []
+        for i, page in enumerate(gen, start=1):
+            if not notitle:
+                page_fmt = Formatter(page, outputlang)
+                output_list += [page_fmt.output(num=i, fmt=fmt)]
+            if page_get:
+                if output_list:
+                    pywikibot.stdout(output_list.pop(-1))
+                try:
+                    pywikibot.stdout(page.text)
+                except Error as err:
+                    pywikibot.output(err)
+            if base_dir:
+                filename = os.path.join(base_dir, page.title(as_filename=True))
+                pywikibot.output('Saving {} to {}'
+                                 .format(page.title(), filename))
+                with open(filename, mode='wb') as f:
+                    f.write(page.text.encode(encoding))
+        text = '\n'.join(output_list)
+        if page_target:
+            page_target.text = text
+            page_target.save(summary=summary)
+        pywikibot.stdout(text)
+        pywikibot.output('{} page(s) found'.format(i))
     else:
-        pywikibot.showHelp()
+        pywikibot.bot.suggest_help(missing_generator=True)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -1,4 +1,3 @@
-# -*- coding: utf-8  -*-
 """
 XML reading module.
 
@@ -9,21 +8,16 @@ https://dumps.wikimedia.org/backup-index.html) and offers a generator over
 XmlEntry objects which can be used by other bots.
 """
 #
-# (C) Pywikibot team, 2005-2013
+# (C) Pywikibot team, 2005-2020
 #
 # Distributed under the terms of the MIT license.
 #
-from __future__ import unicode_literals
-
-__version__ = '$Id$'
-#
-
-import threading
 import re
-from xml.etree.cElementTree import iterparse
+import threading
 import xml.sax
+from xml.etree.ElementTree import iterparse
 
-from pywikibot.tools import open_compressed
+from pywikibot.tools import open_archive
 
 
 def parseRestrictions(restrictions):
@@ -56,7 +50,7 @@ class XmlEntry:
     def __init__(self, title, ns, id, text, username, ipedit, timestamp,
                  editRestriction, moveRestriction, revisionid, comment,
                  redirect):
-        """Constructor."""
+        """Initializer."""
         # TODO: there are more tags we can read.
         self.title = title
         self.ns = ns
@@ -85,8 +79,8 @@ class XmlParserThread(threading.Thread):
     """
 
     def __init__(self, filename, handler):
-        """Constructor."""
-        threading.Thread.__init__(self)
+        """Initializer."""
+        super().__init__()
         self.filename = filename
         self.handler = handler
 
@@ -95,7 +89,7 @@ class XmlParserThread(threading.Thread):
         xml.sax.parse(self.filename, self.handler)
 
 
-class XmlDump(object):
+class XmlDump:
 
     """
     Represents an XML dump file.
@@ -103,13 +97,13 @@ class XmlDump(object):
     Reads the local file at initialization,
     parses it, and offers access to the resulting XmlEntries via a generator.
 
-    @param allrevisions: boolean
+    :param allrevisions: boolean
         If True, parse all revisions instead of only the latest one.
         Default: False.
     """
 
     def __init__(self, filename, allrevisions=False):
-        """Constructor."""
+        """Initializer."""
         self.filename = filename
         if allrevisions:
             self._parse = self._parse_all
@@ -117,67 +111,63 @@ class XmlDump(object):
             self._parse = self._parse_only_latest
 
     def parse(self):
-        """Generator using cElementTree iterparse function."""
-        with open_compressed(self.filename) as source:
-            # iterparse's event must be a str but they are unicode with
-            # unicode_literals in Python 2
-            context = iterparse(source, events=(str('start'), str('end'),
-                                                str('start-ns')))
+        """Generator using ElementTree iterparse function."""
+        with open_archive(self.filename) as source:
+            context = iterparse(source, events=('start', 'end', 'start-ns'))
             self.root = None
 
             for event, elem in context:
-                if event == "start-ns" and elem[0] == "":
+                if event == 'start-ns' and elem[0] == '':
                     self.uri = elem[1]
                     continue
-                if event == "start" and self.root is None:
+                if event == 'start' and self.root is None:
                     self.root = elem
                     continue
-                for rev in self._parse(event, elem):
-                    yield rev
+                yield from self._parse(event, elem)
 
     def _parse_only_latest(self, event, elem):
         """Parser that yields only the latest revision."""
-        if event == "end" and elem.tag == "{%s}page" % self.uri:
+        if event == 'end' and elem.tag == '{%s}page' % self.uri:
             self._headers(elem)
-            revision = elem.find("{%s}revision" % self.uri)
+            revision = elem.find('{%s}revision' % self.uri)
             yield self._create_revision(revision)
             elem.clear()
             self.root.clear()
 
     def _parse_all(self, event, elem):
         """Parser that yields all revisions."""
-        if event == "start" and elem.tag == "{%s}page" % self.uri:
+        if event == 'start' and elem.tag == '{%s}page' % self.uri:
             self._headers(elem)
-        if event == "end" and elem.tag == "{%s}revision" % self.uri:
+        if event == 'end' and elem.tag == '{%s}revision' % self.uri:
             yield self._create_revision(elem)
             elem.clear()
             self.root.clear()
 
     def _headers(self, elem):
         """Extract headers from XML chunk."""
-        self.title = elem.findtext("{%s}title" % self.uri)
-        self.ns = elem.findtext("{%s}ns" % self.uri)
-        self.pageid = elem.findtext("{%s}id" % self.uri)
-        self.restrictions = elem.findtext("{%s}restrictions" % self.uri)
-        self.isredirect = elem.findtext("{%s}redirect" % self.uri) is not None
+        self.title = elem.findtext('{%s}title' % self.uri)
+        self.ns = elem.findtext('{%s}ns' % self.uri)
+        self.pageid = elem.findtext('{%s}id' % self.uri)
+        self.restrictions = elem.findtext('{%s}restrictions' % self.uri)
+        self.isredirect = elem.findtext('{%s}redirect' % self.uri) is not None
         self.editRestriction, self.moveRestriction = parseRestrictions(
             self.restrictions)
 
     def _create_revision(self, revision):
         """Create a Single revision."""
-        revisionid = revision.findtext("{%s}id" % self.uri)
-        timestamp = revision.findtext("{%s}timestamp" % self.uri)
-        comment = revision.findtext("{%s}comment" % self.uri)
-        contributor = revision.find("{%s}contributor" % self.uri)
-        ipeditor = contributor.findtext("{%s}ip" % self.uri)
-        username = ipeditor or contributor.findtext("{%s}username" % self.uri)
+        revisionid = revision.findtext('{%s}id' % self.uri)
+        timestamp = revision.findtext('{%s}timestamp' % self.uri)
+        comment = revision.findtext('{%s}comment' % self.uri)
+        contributor = revision.find('{%s}contributor' % self.uri)
+        ipeditor = contributor.findtext('{%s}ip' % self.uri)
+        username = ipeditor or contributor.findtext('{%s}username' % self.uri)
         # could get comment, minor as well
-        text = revision.findtext("{%s}text" % self.uri)
+        text = revision.findtext('{%s}text' % self.uri)
         return XmlEntry(title=self.title,
                         ns=self.ns,
                         id=self.pageid,
-                        text=text or u'',
-                        username=username or u'',  # username might be deleted
+                        text=text or '',
+                        username=username or '',  # username might be deleted
                         ipedit=bool(ipeditor),
                         timestamp=timestamp,
                         editRestriction=self.editRestriction,
