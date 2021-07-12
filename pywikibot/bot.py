@@ -176,13 +176,8 @@ from pywikibot.tools.formatter import color_format
 # Note: all output goes through python std library "logging" module
 _logger = 'bot'
 
-# User interface initialization
-# search for user interface module in the 'userinterfaces' subdirectory
-uiModule = __import__('pywikibot.userinterfaces.{}_interface'
-                      .format(config.userinterface), fromlist=['UI'])
-ui = uiModule.UI()
-atexit.register(ui.flush)
-pywikibot.argvu = ui.argvu()
+ui = None
+
 
 _GLOBAL_HELP = """
 GLOBAL OPTIONS
@@ -256,6 +251,24 @@ GLOBAL OPTIONS
 For global options use -help:global or run pwb.py -help
 
 """
+
+
+def set_interface(module_name):
+    """Configures any bots to use the given interface module."""
+    global ui
+
+    # User interface initialization
+    # search for user interface module in the 'userinterfaces' subdirectory
+    ui_module = __import__('pywikibot.userinterfaces.{}_interface'
+                           .format(module_name), fromlist=['UI'])
+    ui = ui_module.UI()
+    atexit.register(ui.flush)
+    pywikibot.argvu = ui.argvu()
+
+    # re-initialize if we were already initialized with another UI
+
+    if _handlers_initialized:
+        init_handlers()
 
 
 # Initialize the handlers and formatters for the logging system.
@@ -1117,12 +1130,12 @@ class OptionHandler:
         self.set_options(**kwargs)
 
     @property
-    @deprecated('available_options', since='20201006', future_warning=True)
+    @deprecated('available_options', since='20201006')
     def availableOptions(self):
         """DEPRECATED. Available_options class property."""
         return self.available_options
 
-    @deprecated('set_options', since='20201006', future_warning=True)
+    @deprecated('set_options', since='20201006')
     def setOptions(self, **kwargs):  # pragma: no cover
         """DEPRECATED. Set the instance options."""
         self.set_options(**kwargs)
@@ -1136,7 +1149,7 @@ class OptionHandler:
         if old_options:  # old options were set and not updated
             self.available_options = self.availableOptions
             issue_deprecation_warning(warning, 'available_options',
-                                      since='20201006', future_warning=True)
+                                      since='20201006')
 
         valid_options = set(self.available_options)
         received_options = set(options)
@@ -1150,7 +1163,7 @@ class OptionHandler:
             pywikibot.warning('{} is not a valid option. It was ignored.'
                               .format(opt))
 
-    @deprecated(_DEPRECATION_MSG, since='20201006', future_warning=True)
+    @deprecated(_DEPRECATION_MSG, since='20201006')
     def getOption(self, option):  # pragma: no cover
         """DEPRECATED. Get the current value of an option.
 
@@ -1192,6 +1205,11 @@ class BaseBot(OptionHandler):
         'always': False,  # By default ask for confirmation when putting a page
     }
 
+    # update_options can be used to update available_options;
+    # do not use it if the bot class is to be derived but use
+    # self.available_options.update(<dict>) initializer in such case
+    update_options = {}
+
     _current_page = None
 
     def __init__(self, **kwargs):
@@ -1207,6 +1225,7 @@ class BaseBot(OptionHandler):
             else:
                 self.generator = kwargs.pop('generator')
 
+        self.available_options.update(self.update_options)
         super().__init__(**kwargs)
 
         self._treat_counter = 0
@@ -1319,11 +1338,11 @@ class BaseBot(OptionHandler):
         :param args: passed to the function
         :param kwargs: passed to the function
         :keyword ignore_server_errors: if True, server errors will be reported
-          and ignored (default: False)
-        @kwtype ignore_server_errors: bool
+            and ignored (default: False)
+        :kwtype ignore_server_errors: bool
         :keyword ignore_save_related_errors: if True, errors related to
-        page save will be reported and ignored (default: False)
-        @kwtype ignore_save_related_errors: bool
+            page save will be reported and ignored (default: False)
+        :kwtype ignore_save_related_errors: bool
         :return: whether the page was saved successfully
         :rtype: bool
         """
@@ -1812,7 +1831,22 @@ class AutomaticTWSummaryBot(CurrentPageBot):
     @property
     def summary_parameters(self):
         """A dictionary of all parameters for i18n."""
+        if hasattr(self, '_summary_parameters'):
+            return self._summary_parameters
         return {}
+
+    @summary_parameters.setter
+    def summary_parameters(self, value):
+        """Set the i18n dictionary."""
+        if not isinstance(value, dict):
+            raise TypeError('"value" must be a dict but {} was found.'
+                            .format(type(value).__name__))
+        self._summary_parameters = value
+
+    @summary_parameters.deleter
+    def summary_parameters(self):
+        """Delete the i18n dictionary."""
+        del self._summary_parameters
 
     def put_current(self, *args, **kwargs):
         """Defining a summary if not already defined and then call original."""
@@ -1957,16 +1991,15 @@ class WikidataBot(Bot, ExistingPageBot):
         :param property_name: property to find
         :type property_name: str
         """
-        ns = self.site.data_repository().property_namespace
-        for page in self.site.search(property_name, total=1, namespaces=ns):
-            page = pywikibot.PropertyPage(self.site.data_repository(),
-                                          page.title())
+        ns = self.repo.property_namespace
+        for page in self.repo.search(property_name, total=1, namespaces=ns):
+            page = pywikibot.PropertyPage(self.repo, page.title())
             pywikibot.output('Assuming that {} property is {}.'
                              .format(property_name, page.id))
             return page.id
         return pywikibot.input('Property {} was not found. Please enter the '
                                'property ID (e.g. P123) of it:'
-                               .format(property_name).upper())
+                               .format(property_name)).upper()
 
     def user_edit_entity(self, entity, data=None,
                          ignore_save_related_errors=None,
@@ -2225,3 +2258,6 @@ class WikidataBot(Bot, ExistingPageBot):
         raise NotImplementedError('Method {}.treat_page_and_item() not '
                                   'implemented.'
                                   .format(self.__class__.__name__))
+
+
+set_interface(config.userinterface)

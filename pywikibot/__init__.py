@@ -1306,6 +1306,11 @@ def _flush(stop=True):
                             'Estimated time remaining: {}\nReally exit?'
                             .format(*remaining()),
                             default=False, automatic_quit=False):
+                    # delete the put queue
+                    with page_put_queue.mutex:
+                        page_put_queue.all_tasks_done.notify_all()
+                        page_put_queue.queue.clear()
+                        page_put_queue.not_full.notify_all()
                     break
 
     # only need one drop() call because all throttles use the same global pid
@@ -1333,12 +1338,8 @@ def async_manager():
 def async_request(request, *args, **kwargs):
     """Put a request on the queue, and start the daemon if necessary."""
     if not _putthread.is_alive():
-        try:
-            page_put_queue.mutex.acquire()
-            with suppress(AssertionError, RuntimeError):
-                _putthread.start()
-        finally:
-            page_put_queue.mutex.release()
+        with page_put_queue.mutex, suppress(AssertionError, RuntimeError):
+            _putthread.start()
     page_put_queue.put((request, args, kwargs))
 
 
@@ -1354,15 +1355,15 @@ _putthread.setDaemon(True)
 
 wrapper = _ModuleDeprecationWrapper(__name__)
 wrapper.add_deprecated_attr('config2', replacement_name='pywikibot.config',
-                            since='20210426', future_warning=True)
+                            since='20210426')
 wrapper.add_deprecated_attr('__release__', __version__,
                             replacement_name='pywikibot.__version__',
                             since='20200707')
 wrapper.add_deprecated_attr('showHelp', show_help,
-                            since='20200705', future_warning=True)
+                            since='20200705')
 wrapper.add_deprecated_attr(
     'unicode2html', replacement_name='pywikibot.tools.chars.string2html',
-    since='6.2.0', future_warning=True)
+    since='6.2.0')
 
 # This module aliases many (but not all) pywikibot.exception classes and one
 # from pywikibot.data.api. Use of these aliases is deprecated. When removed
@@ -1387,5 +1388,5 @@ for name in __all__:
         wrapper.add_deprecated_attr(
             name,
             replacement_name='pywikibot.exceptions.{}'.format(replacement),
-            since='20210424', future_warning=True
+            since='20210424'
         )

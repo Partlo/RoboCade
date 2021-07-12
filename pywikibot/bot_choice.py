@@ -183,7 +183,6 @@ class OutputProxyOption(OutputOption, StandardOption):
         if not hasattr(self._outputter, 'out'):
             issue_deprecation_warning('{} without "out" property'
                                       .format(self.__class__.__name__),
-                                      warning_class=FutureWarning,
                                       since='6.2.0')
             return self._outputter.output()
         return self._outputter.out
@@ -252,8 +251,7 @@ class ContextOption(OutputOption, StandardOption):
         return self.text[start:end]
 
     @deprecated_args(start_context='start', end_context='end')
-    @deprecated('pywikibot.output(ContextOption.out)', since='6.2.0',
-                future_warning=True)
+    @deprecated('pywikibot.output(ContextOption.out)', since='6.2.0')
     def output_range(self, start, end):
         """DEPRECATED. Output a section from the text."""
         pywikibot.output(self.text[start:end])
@@ -562,7 +560,7 @@ class HighlightContextOption(ContextOption):
                             self.text[self.end:end])
 
     @deprecated('pywikibot.output(HighlightContextOption.out)',
-                since='6.2.0', future_warning=True)
+                since='6.2.0')
     def output_range(self, start, end):
         """DEPRECATED. Show normal context with a highlighted center region."""
         color_format = pywikibot.tools.formatter.color_format

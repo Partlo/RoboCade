@@ -144,7 +144,6 @@ fully deprecated, possibly because a replacement is not available
 RuntimeWarning: problems developers should have fixed, and users need to
 be aware of its status.
 
-  - tools._NotImplementedWarning: do not use
   - NotImplementedWarning: functionality not implemented
 
 UserWarning: warnings targeted at users
@@ -165,11 +164,8 @@ import re
 import sys
 from typing import Optional, Union
 
-from pywikibot.tools import (
-    ModuleDeprecationWrapper,
-    _NotImplementedWarning,
-    issue_deprecation_warning,
-)
+from pywikibot.tools import ModuleDeprecationWrapper, issue_deprecation_warning
+from pywikibot.tools._deprecate import _NotImplementedWarning
 
 
 class NotImplementedWarning(_NotImplementedWarning):
@@ -300,8 +296,7 @@ class PageRelatedError(Error):
         elif re.search(r'%\(\w+\)s', self.message):
             issue_deprecation_warning("'%' style messages are deprecated, "
                                       'please use str.format() style instead',
-                                      since='20210504',
-                                      warning_class=FutureWarning)
+                                      since='20210504')
             msg = self.message % self.__dict__
         elif '%s' in self.message:
             msg = self.message % page
@@ -548,12 +543,12 @@ class AbuseFilterDisallowedError(PageSaveRelatedError):
     """Page save failed because the AbuseFilter disallowed it."""
 
     message = ('Edit to page %(title)s disallowed by the AbuseFilter.\n'
-               '%(info)s\n%(warning)s')
+               '%(info)s')
 
-    def __init__(self, page, info, warning):
+    def __init__(self, page, info, other):
         """Initializer."""
         self.info = info
-        self.warning = warning
+        self.other = other
         super().__init__(page)
 
 
@@ -718,4 +713,4 @@ module = sys.modules[__name__]
 for old_name, new_name in DEPRECATED_EXCEPTIONS.items():
     setattr(module, old_name, getattr(module, new_name))
     wrapper.add_deprecated_attr(old_name, replacement_name=new_name,
-                                since='20210423', future_warning=True)
+                                since='20210423')

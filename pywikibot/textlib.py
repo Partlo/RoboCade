@@ -153,7 +153,7 @@ def to_local_digits(phrase: Union[str, int], lang: str) -> str:
     return phrase
 
 
-@deprecated('html.unescape', since='20210405', future_warning=True)
+@deprecated('html.unescape', since='20210405')
 def unescape(s: str) -> str:
     """Replace escaped HTML-special characters by their originals."""
     return html.unescape(s)
@@ -830,6 +830,38 @@ def replace_links(text: str, replace, site=None) -> str:
         # Make sure that next time around we will not find this same hit.
         curpos = start + len(new_text)
     return text
+
+
+def add_text(text: str, add: str, *, site=None) -> str:
+    """Add text to a page content above categories and interwiki.
+
+    *New in version 6.4.*
+
+    :param text: The page content to add text to.
+    :param add: Text to add.
+    :param site: The site that the text is coming from. Required for
+        reorder of categories and interlanguage links. Te default site
+        is used otherwise.
+    :type site: pywikibot.Site
+    """
+    # Translating the \\n (e.g. from command line) into binary \n
+    add = add.replace('\\n', '\n')
+
+    # Getting the categories
+    categories_inside = getCategoryLinks(text, site)
+    # Deleting the categories
+    text = removeCategoryLinks(text, site)
+    # Getting the interwiki
+    interwiki_inside = getLanguageLinks(text, site)
+    # Removing the interwiki
+    text = removeLanguageLinks(text, site)
+
+    # Adding the text
+    text += '\n' + add
+    # Reputting the categories
+    text = replaceCategoryLinks(text, categories_inside, site, addOnly=True)
+    # Adding the interwiki
+    return replaceLanguageLinks(text, interwiki_inside, site)
 
 
 # -------------------------------

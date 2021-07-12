@@ -879,7 +879,7 @@ class BasePage(ComparableMixin):
                      onlyTemplateInclusion='only_template_inclusion',
                      redirectsOnly='filter_redirects')
     def getReferences(self,
-                      follow_redirects = True,
+                      follow_redirects: bool = True,
                       with_template_inclusion: bool = True,
                       only_template_inclusion: bool = False,
                       filter_redirects: bool = False,
@@ -1248,10 +1248,10 @@ class BasePage(ComparableMixin):
                       .format(family, self.site.lang))
         # cc depends on page directly and via several other imports
         from pywikibot.cosmetic_changes import (
-            CANCEL_MATCH,
+            CANCEL,
             CosmeticChangesToolkit,
         )
-        cc_toolkit = CosmeticChangesToolkit(self, ignore=CANCEL_MATCH)
+        cc_toolkit = CosmeticChangesToolkit(self, ignore=CANCEL.MATCH)
         self.text = cc_toolkit.change(old)
 
         if summary and old.strip().replace(
@@ -1756,32 +1756,30 @@ class BasePage(ComparableMixin):
                     self.site._noDeletePrompt = True
             if answer == 'y':
                 self.site.delete(self, reason)
-                return
+            return
 
-        else:  # Otherwise mark it for deletion
-            if mark or hasattr(self.site, '_noMarkDeletePrompt'):
+        # Otherwise mark it for deletion
+        if mark or hasattr(self.site, '_noMarkDeletePrompt'):
+            answer = 'y'
+        else:
+            answer = pywikibot.input_choice(
+                "Can't delete {}; do you want to mark it for deletion instead?"
+                .format(self),
+                [('Yes', 'y'), ('No', 'n'), ('All', 'a')],
+                'n', automatic_quit=False)
+            if answer == 'a':
                 answer = 'y'
+                self.site._noMarkDeletePrompt = True
+        if answer == 'y':
+            template = '{{delete|1=%s}}\n' % reason
+            # We can't add templates in a wikidata item, so let's use its
+            # talk page
+            if isinstance(self, pywikibot.ItemPage):
+                target = self.toggleTalkPage()
             else:
-                answer = pywikibot.input_choice(
-                    "Can't delete {}; do you want to mark it "
-                    'for deletion instead?'
-                    .format(self.title(as_link=True, force_interwiki=True)),
-                    [('Yes', 'y'), ('No', 'n'), ('All', 'a')],
-                    'n', automatic_quit=False)
-                if answer == 'a':
-                    answer = 'y'
-                    self.site._noMarkDeletePrompt = True
-            if answer == 'y':
-                template = '{{delete|1=%s}}\n' % reason
-                # We can't add templates in a wikidata item, so let's use its
-                # talk page
-                if isinstance(self, pywikibot.ItemPage):
-                    talk = self.toggleTalkPage()
-                    talk.text = template + talk.text
-                    talk.save(summary=reason)
-                else:
-                    self.text = template + self.text
-                    self.save(summary=reason)
+                target = self
+            target.text = template + target.text
+            target.save(summary=reason)
 
     def has_deleted_revisions(self) -> bool:
         """Return True if the page has deleted revisions.
@@ -2263,7 +2261,7 @@ class FilePage(Page):
     def _load_file_revisions(self, imageinfo):
         for file_rev in imageinfo:
             # filemissing in API response indicates most fields are missing
-            # see https://gerrit.wikimedia.org/r/#/c/mediawiki/core/+/533482/
+            # see https://gerrit.wikimedia.org/r/c/mediawiki/core/+/533482/
             if 'filemissing' in file_rev:
                 pywikibot.warning("File '{}' contains missing revisions"
                                   .format(self.title()))
@@ -4532,7 +4530,7 @@ class Claim(Property):
         source = OrderedDict()
 
         # Before #84516 Wikibase did not implement snaks-order.
-        # https://gerrit.wikimedia.org/r/#/c/84516/
+        # https://gerrit.wikimedia.org/r/c/84516/
         if 'snaks-order' in data:
             prop_list = data['snaks-order']
         else:
@@ -5031,7 +5029,7 @@ class BaseLink(ComparableMixin):
         """
         if not hasattr(self, '_namespace'):
             self._namespace = self.lookup_namespace()
-        return self._namespaace
+        return self._namespace
 
     def canonical_title(self):
         """Return full page title, including localized namespace."""
@@ -5746,8 +5744,7 @@ def html2unicode(text: str, ignore=None, exceptions=None) -> str:
 
 
 @deprecated_args(site='encodings')
-@deprecated('pywikibot.tools.chars.url2string', since='6.2.0',
-            future_warning=True)
+@deprecated('pywikibot.tools.chars.url2string', since='6.2.0')
 def url2unicode(title: str, encodings='utf-8') -> str:
     """
     DEPRECATED. Convert URL-encoded text to unicode using several encoding.
@@ -5767,7 +5764,6 @@ def url2unicode(title: str, encodings='utf-8') -> str:
             'Passing BaseSite object to encodings parameter',
             'BaseSite.endcodings()',
             depth=1,
-            warning_class=FutureWarning,
             since='6.2.0'
         )
 
@@ -5778,8 +5774,8 @@ wrapper = ModuleDeprecationWrapper(__name__)
 wrapper.add_deprecated_attr(
     'UnicodeToAsciiHtml',
     replacement_name='pywikibot.tools.chars.string_to_ascii_html',
-    since='6.2.0', future_warning=True)
+    since='6.2.0')
 wrapper.add_deprecated_attr(
     'unicode2html',
     replacement_name='pywikibot.tools.chars.string2html',
-    since='6.2.0', future_warning=True)
+    since='6.2.0')

@@ -19,6 +19,7 @@ from warnings import warn
 
 import pywikibot
 import pywikibot.family
+from pywikibot.backports import List
 from pywikibot.comms.http import get_authentication
 from pywikibot.data import api
 from pywikibot.exceptions import (
@@ -823,7 +824,7 @@ class APISite(
         # return the magic word without the preceding '#' character
         return self.getmagicwords('redirect')[0].lstrip('#')
 
-    @deprecated('redirect_regex', since='20210103', future_warning=True)
+    @deprecated('redirect_regex', since='20210103')
     def redirectRegex(self):  # noqa: N802
         """Return a compiled regular expression matching on redirect pages."""
         return self.redirect_regex
@@ -1292,7 +1293,7 @@ class APISite(
 
         return page._redirtarget
 
-    def validate_tokens(self, types):
+    def validate_tokens(self, types: List[str]):
         """Validate if requested tokens are acceptable.
 
         Valid tokens depend on mw version.
@@ -1315,7 +1316,7 @@ class APISite(
                     valid_types.append('csrf')
         return valid_types
 
-    def get_tokens(self, types, all: bool = False) -> dict:
+    def get_tokens(self, types: List[str], all: bool = False) -> dict:
         """Preload one or multiple tokens.
 
         For MediaWiki version 1.23, only one token can be retrieved at once.
@@ -1336,7 +1337,6 @@ class APISite(
 
         :param types: the types of token (e.g., "edit", "move", "delete");
             see API documentation for full list of types
-        :type types: iterable
         :param all: load all available tokens, if None only if it can be done
             in one request.
 
@@ -1637,10 +1637,8 @@ class APISite(
                             'logged in'.format(err.code),
                             _logger)
                     if err.code == 'abusefilter-warning':
-                        pywikibot.warning('{info}\n{warning}\nRetrying.'
-                                          .format(info=err.info,
-                                                  warning=err.other['warning'],
-                                                  ))
+                        pywikibot.warning('{info}\nRetrying.'
+                                          .format(info=err.info))
                         continue
                     if err.code in self._ep_errors:
                         exception = self._ep_errors[err.code]
@@ -1655,7 +1653,7 @@ class APISite(
                         if issubclass(exception, AbuseFilterDisallowedError):
                             errdata = {
                                 'info': err.info,
-                                'warning': err.other['warning'],
+                                'other': err.other,
                             }
                             raise exception(page, **errdata) from None
                         if issubclass(exception, SpamblacklistError):
@@ -2112,7 +2110,7 @@ class APISite(
             self.unlock_page(page)
 
     @deprecate_arg('summary', 'reason')
-    @deprecated('delete()', since='20210330', future_warning=True)
+    @deprecated('delete()', since='20210330')
     def deletepage(self, page, reason: str):
         """Delete page from the wiki. Requires appropriate privilege level.
 
@@ -2127,8 +2125,7 @@ class APISite(
         """
         self.delete(page, reason)
 
-    @deprecated('delete() with oldimage keyword parameter', since='20210330',
-                future_warning=True)
+    @deprecated('delete() with oldimage keyword parameter', since='20210330')
     def deleteoldimage(self, page, oldimage: str, reason: str):
         """Delete a specific version of a file. Requires appropriate privileges.
 
@@ -2195,7 +2192,7 @@ class APISite(
             self.unlock_page(page)
 
     @deprecate_arg('summary', 'reason')
-    @deprecated('undelete()', since='20210330', future_warning=True)
+    @deprecated('undelete()', since='20210330')
     def undelete_page(self, page, reason: str, revisions=None):
         """DEPRECATED. Undelete page from the wiki.
 
@@ -2210,8 +2207,7 @@ class APISite(
         """
         self.undelete(page, reason, revisions=revisions)
 
-    @deprecated('undelete() with fileids parameter', since='20210330',
-                future_warning=True)
+    @deprecated('undelete() with fileids parameter', since='20210330')
     def undelete_file_versions(self, page, reason: str, fileids=None):
         """DEPRECATED. Undelete page from the wiki.
 
@@ -2951,7 +2947,7 @@ class APISite(
                             source_url=source_url, comment=comment,
                             text=text, watch=watch, ignore_warnings=True,
                             chunk_size=chunk_size, asynchronous=asynchronous,
-                            _file_key=_file_key, offset=result['offset'],
+                            _file_key=_file_key, _offset=result['offset'],
                             report_success=False)
                     return False
 

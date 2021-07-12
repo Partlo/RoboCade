@@ -472,7 +472,7 @@ transliteration_target = None
 # https://docs.python.org/3/library/codecs.html#standard-encodings
 textfile_encoding = 'utf-8'
 
-# currently terminal is the only userinterface supported
+# currently terminal and buffer are the only supported userinterfaces
 userinterface = 'terminal'
 
 # this can be used to pass variables to the UI init function
@@ -688,7 +688,7 @@ put_throttle = 10  # type: Union[int, float]
 noisysleep = 3.0
 
 # Defer bot edits during periods of database server lag. For details, see
-# https://www.mediawiki.org/wiki/Maxlag_parameter
+# https://www.mediawiki.org/wiki/Manual:Maxlag_parameter
 # You can set this variable to a number of seconds, or to None (or 0) to
 # disable this behavior. Higher values are more aggressive in seeking
 # access to the wiki.
