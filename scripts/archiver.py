@@ -8,8 +8,8 @@ class ArchiveException(Exception):
     def __init__(self, message):
         self.message = message
 
-class ArchiveCommand:
 
+class ArchiveCommand:
     def __init__(self, successful: bool, nom_type: str, article_name: str, suffix: str):
         self.successful = successful
         self.nom_type = nom_type
@@ -22,7 +22,7 @@ class ArchiveCommand:
 
         match = re.search("(?P<result>([Ss]uccessful|[Uu]nsuccessful|[Ff]ailed)) (?P<ntype>[CGFJ]A)N: (?P<article>.*?)(?P<suffix> \([A-z]+ nomination\))?$", command.strip())
         if not match:
-            assert False, "Invalid command"
+            raise ArchiveException("Invalid command")
 
         result_str = match.groupdict().get('result', '').lower()
         if result_str == "successful":
@@ -30,11 +30,11 @@ class ArchiveCommand:
         elif result_str == "unsuccessful" or result_str == "failed":
             successful = False
         else:
-            assert False, f"Invalid result {result_str}"
+            raise ArchiveException(f"Invalid result {result_str}")
 
         nom_type = match.groupdict().get('ntype')
         if nom_type not in ["CA", "GA", "FA"]:
-            assert False, f"Unrecognized nomination type {nom_type}"
+            raise ArchiveException(f"Unrecognized nomination type {nom_type}")
 
         article_name = match.groupdict().get('article')
         suffix = match.groupdict().get('suffix') or ''
@@ -135,9 +135,9 @@ class Archiver:
             self.update_nomination_history(
                 nom_type=command.nom_type, page=page, nom_page_name=nom_page_name, successful=command.successful,
                 nominated_revision=nominated, completed_revision=completed)
-        except AssertionError as e:
+        except ArchiveException as e:
             print(e)
-            return False, self.extract_err_msg(e)
+            return False, e.message
         except Exception as e:
             print(e)
             return False, self.extract_err_msg(e)
@@ -147,7 +147,7 @@ class Archiver:
         
     def extract_err_msg(self, e):
             try:
-                return str(e.args[0] if str(e.args[0]).startswith('(') else e.args)
+                return str(e.args[0] if str(e.args).startswith('(') else e.args)
             except Exception as _:
                 return str(e.args)
 
@@ -156,14 +156,14 @@ class Archiver:
 
         parent_page = pywikibot.Page(self.site, self.nom_pages[nom_type])
         if not parent_page.exists():
-            assert False, f"{self.nom_pages[nom_type]} does not exist"
+            raise ArchiveException(f"{self.nom_pages[nom_type]} does not exist")
 
         expected = "{{/" + subpage + "}}"
         print(expected)
 
         text = parent_page.get()
         if expected not in text:
-            assert False, f"Cannot find /{subpage} in nomination page"
+            raise ArchiveException(f"Cannot find /{subpage} in nomination page")
 
         lines = text.splitlines()
         new_lines = []
@@ -184,7 +184,7 @@ class Archiver:
                 new_lines.append(line)
         new_text = "\n".join(new_lines)
         if not found:
-            assert False, f"Cannot find /{subpage} in nomination page"
+            raise ArchiveException("Cannot find /{subpage} in nomination page")
 
         self.input_prompts(text, new_text)
 
@@ -211,7 +211,7 @@ class Archiver:
 
         new_text = "\n".join(new_lines)
         if not found:
-            assert False, f"Cannot find category in nomination page"
+            raise ArchiveException(f"Cannot find category in nomination page")
 
         self.input_prompts(text, new_text)
 
@@ -272,9 +272,9 @@ class Archiver:
     def edit_target_article(self, *, page, successful, nom_type, edit_comment):
         text = page.get()
         nt = "CA" if nom_type == "JA" else nom_type
-        
+
+        former_status = None
         if successful:
-            former_status = None
             match = re.search("{{[Tt]op.*?\|([cgf]a)[|}]", text)
             if match:
                 former_status = match.group(1)
@@ -282,12 +282,12 @@ class Archiver:
             text1 = re.sub("({{[Tt]op.*?)\|f?[cgf]a([|}])", "\\1\\2", text)
             text2 = re.sub("{{[Tt]op([|\}])", f"{{{{Top|{nt.lower()}\\1", text1)
             if text1 == text2:
-                assert False, "Could not add status to {{Top}} template"
+                raise ArchiveException("Could not add status to {{Top}} template")
         else:
             text2 = text
         text3 = re.sub("{{" + nt + "nom[|}].*?\n", "", text2)
         if text2 == text3:
-            assert False, "Could not remove nomination template from page"
+            raise ArchiveException("Could not remove nomination template from page")
 
         self.input_prompts(text, text3)
 
@@ -310,9 +310,9 @@ class Archiver:
                 break
 
         if completed_revision is None:
-            assert False, "Could not find completed revision"
+            raise ArchiveException("Could not find completed revision")
         elif nominated_revision is None:
-            assert False, "Could not find nomination revision"
+            raise ArchiveException("Could not find nomination revision")
         return completed_revision, nominated_revision
 
     def update_talk_page(self, *, talk_page, nom_type, successful, nom_page_name, nominated, completed):
@@ -361,7 +361,7 @@ class Archiver:
                     continue
                 new_lines.append(line)
             if not found:
-                assert False, "Could not find {ahf} template"
+                raise ArchiveException("Could not find {ahf} template")
 
         elif "{{talkheader" not in text.lower():
             if successful:
