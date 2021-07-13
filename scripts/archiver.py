@@ -136,7 +136,7 @@ class Archiver:
                 nom_type=command.nom_type, page=page, nom_page_name=nom_page_name, successful=command.successful,
                 nominated_revision=nominated, completed_revision=completed)
         except ArchiveException as e:
-            print(e)
+            print(e.message)
             return False, e.message
         except Exception as e:
             print(e)
@@ -184,7 +184,7 @@ class Archiver:
                 new_lines.append(line)
         new_text = "\n".join(new_lines)
         if not found:
-            raise ArchiveException("Cannot find /{subpage} in nomination page")
+            raise ArchiveException(f"Cannot find /{subpage} in nomination page")
 
         self.input_prompts(text, new_text)
 
@@ -272,7 +272,7 @@ class Archiver:
     def edit_target_article(self, *, page, successful, nom_type, edit_comment):
         text = page.get()
         nt = "CA" if nom_type == "JA" else nom_type
-
+        
         former_status = None
         if successful:
             match = re.search("{{[Tt]op.*?\|([cgf]a)[|}]", text)
