@@ -4,6 +4,10 @@ import time
 from typing import Tuple
 
 
+class ArchiveException(Exception):
+    def __init__(self, message):
+        self.message = message
+
 class ArchiveCommand:
 
     def __init__(self, successful: bool, nom_type: str, article_name: str, suffix: str):
@@ -42,6 +46,7 @@ class ArchiveCommand:
 class Archiver:
     def __init__(self, *, test_mode=False, auto=False):
         self.site = pywikibot.Site()
+        self.site.login()
         self.test_mode = test_mode
         self.auto = auto
         self.talk_ns = "User talk" if self.test_mode else "Talk"
@@ -111,7 +116,7 @@ class Archiver:
             else:
                 edit_comment = f"Unsuccessful {command.nom_type}N"
             print(f"Marking {command.article_name} as {edit_comment}")
-            self.edit_target_article(page=page, nom_type=command.nom_type, edit_comment=edit_comment)
+            self.edit_target_article(page=page, successful=command.successful, nom_type=command.nom_type, edit_comment=edit_comment)
 
             print()
             time.sleep(1)
@@ -131,9 +136,20 @@ class Archiver:
                 nom_type=command.nom_type, page=page, nom_page_name=nom_page_name, successful=command.successful,
                 nominated_revision=nominated, completed_revision=completed)
         except AssertionError as e:
-            return False, str(e.args)
+            print(e)
+            return False, self.extract_err_msg(e)
+        except Exception as e:
+            print(e)
+            return False, self.extract_err_msg(e)
 
+        print("Done!")
         return True, ""
+        
+    def extract_err_msg(self, e):
+            try:
+                return str(e.args[0] if str(e.args[0]).startswith('(') else e.args)
+            except Exception as _:
+                return str(e.args)
 
     def remove_nomination_from_parent_page(self, *, nom_type, subpage):
         """ Removes the {{/<nom title>}} transclusion from the parent nomination page. """
@@ -253,22 +269,25 @@ class Archiver:
 
         history_page.put(new_text, f"Archiving {nom_page_name}")
 
-    def edit_target_article(self, *, page, nom_type, edit_comment):
+    def edit_target_article(self, *, page, successful, nom_type, edit_comment):
         text = page.get()
         nt = "CA" if nom_type == "JA" else nom_type
+        
+        if successful:
+            former_status = None
+            match = re.search("{{[Tt]op.*?\|([cgf]a)[|}]", text)
+            if match:
+                former_status = match.group(1)
 
-        former_status = None
-        match = re.search("{{[Tt]op.*?\|([cgf]a)[|}]", text)
-        if match:
-            former_status = match.group(1)
-
-        text1 = re.sub("({{[Tt]op.*?)\|f?[cgf]a([|}])", "\\1\\2", text)
-        text2 = re.sub("{{[Tt]op([|\}])", f"{{{{Top|{nt.lower()}\\1", text1)
-        if text1 == text2:
-            assert False
+            text1 = re.sub("({{[Tt]op.*?)\|f?[cgf]a([|}])", "\\1\\2", text)
+            text2 = re.sub("{{[Tt]op([|\}])", f"{{{{Top|{nt.lower()}\\1", text1)
+            if text1 == text2:
+                assert False, "Could not add status to {{Top}} template"
+        else:
+            text2 = text
         text3 = re.sub("{{" + nt + "nom[|}].*?\n", "", text2)
         if text2 == text3:
-            assert False
+            assert False, "Could not remove nomination template from page"
 
         self.input_prompts(text, text3)
 
@@ -291,9 +310,9 @@ class Archiver:
                 break
 
         if completed_revision is None:
-            assert False
+            assert False, "Could not find completed revision"
         elif nominated_revision is None:
-            assert False
+            assert False, "Could not find nomination revision"
         return completed_revision, nominated_revision
 
     def update_talk_page(self, *, talk_page, nom_type, successful, nom_page_name, nominated, completed):
@@ -311,9 +330,9 @@ class Archiver:
 |result={result}
 }}}}
 {{{{Ahm
-|date={completed['timestamp'].strftime('%B %d, %Y')}
+|date={completed['timestamp'].strftime('%B %-d, %Y')}
 |link={nom_page_name}
-|process={nom_type}
+|process={status}
 |oldid={completed['revid']}
 }}}}
 {{{{Ahf|status={status}}}}}"""
@@ -332,6 +351,8 @@ class Archiver:
         lines = text.splitlines()
         new_lines = []
         if "{{ahf|" in text.lower():
+            if successful:
+                new_lines.append(f"{{{{{nom_type}}}}}")
             found = False
             for line in lines:
                 if "{{ahf|" in line.lower():
@@ -339,13 +360,18 @@ class Archiver:
                     found = True
                     continue
                 new_lines.append(line)
-                if not found:
-                    assert False
+            if not found:
+                assert False, "Could not find {ahf} template"
 
         elif "{{talkheader" not in text.lower():
-            new_lines = ["{{Talkheader}}", history_text, *lines]
+            if successful:
+                new_lines = ["{{Talkheader}}", f"{{{{{nom_type}}}}}", history_text, *lines]
+            else:
+                new_lines = ["{{Talkheader}}", history_text, *lines]
 
         else:
+            if successful:
+                new_lines.append(f"{{{{{nom_type}}}}}")
             found = False
             for line in lines:
                 if not found and not line.startswith("{") and not line.startswith("|"):
